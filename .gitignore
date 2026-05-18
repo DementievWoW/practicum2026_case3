@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data / artifacts (тяжёлые, не для гита)
+data/
+artifacts/
+reports/
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/settings.json
+
+# Env vars
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
