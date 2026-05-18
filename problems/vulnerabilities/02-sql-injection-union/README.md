@@ -57,68 +57,14 @@ q = "x' UNION SELECT table_name, NULL FROM information_schema.tables --"
 q = "x' UNION SELECT current_user, version() --"
 ```
 
-## Эталонный fix
+## Внешние ссылки
 
-То же что и в [01](../01-sql-injection-classic/) — параметризация:
-```python
-cursor.execute(
-    "SELECT id, title FROM products WHERE title ILIKE %s",
-    (f"%{search}%",),
-)
-```
+- **CWE-89**, **CAPEC-66** (Union variant) — в шапке.
+- **research/materials/05-security-benchmarks-datasets/rbsqli-10m/** — Union payloads.
+- **research/materials/04-security-attacks/gsqli-gan-waf-bypass/** — GAN-мутации Union payloads для WAF-bypass.
+- **PortSwigger** «Retrieving data from other tables» chapter.
+- **sqlmap payloads/union_query.xml** — regression set.
 
-Дополнительно — **отзыв `SELECT` на чувствительные таблицы у роли приложения**. Принцип наименьших привилегий из OWASP ASVS V8.
+## Варианты решения
 
-## Как мы детектим
-
-### Phase 1 — `R005-union-suspicious` (ADR-0004)
-
-`pglast.Visitor` обходит `SelectStmt`:
-
-```python
-def visit_SelectStmt(self, ancestors, node):
-    if node.op == enums.SetOperation.SETOP_UNION:
-        upper_cols = count_targets(node.larg)
-        lower_cols = count_targets(node.rarg)
-        if upper_cols != lower_cols:
-            yield Finding("R005-union-suspicious", ...)  # типовая попытка
-        if has_information_schema_or_pg_catalog(node.rarg):
-            yield Finding("R005-union-suspicious", risk_score=9, ...)
-        if has_null_only_select(node.rarg) and is_user_input(snippet):
-            yield Finding("R005-union-suspicious", ...)  # probe-payload
-```
-
-Эвристики Phase 1:
-1. Несогласованное число колонок в `UNION` (часто остаток от probe).
-2. Доступ к `information_schema.*` или `pg_catalog.*` в нижней части `UNION`.
-3. `SELECT NULL, NULL, ...` (probe-payload).
-4. `UNION SELECT` с литералом, идентичным значению в `WHERE` верхнего select'а (попытка отзеркалить колонку для эксфильтрации).
-
-### Phase 2 — LLM-судья
-
-RAG-контекст: CAPEC-66 (Union variant), PortSwigger «Retrieving data from other tables» chapter.
-Промпт инструктирует судью **различать**:
-- Легитимный `UNION` в аналитическом запросе (например, объединение акт. и архивных таблиц) → FP.
-- Подозрительный `UNION` с probe-паттернами или системными каталогами → TP.
-
-## Метрика покрытия
-
-В eval-set: **10 примеров с `vuln_class == SQL_INJ_UNION`** (адаптации из sqlmap `union_query.xml`).
-
-- Recall@iter1 ≥ 0.80.
-- Precision ≥ 0.85 (легитимные `UNION` в datawarehouse-стиле не должны помечаться).
-- Δ risk_score: gold-fix должен снизить до < 4.0.
-
-## Связи
-
-- **ADR-0004** — Phase 1 правило `R005`.
-- **ADR-0005** — RAG-чанки CAPEC-66, OWASP SQLi CS.
-- **research/materials/05-security-benchmarks-datasets/rbsqli-10m/** — datasets с union-payloads.
-- **PortSwigger SQLi cheat sheet** — `kb.payloads` (Union-based section).
-- **sqlmap payloads/union_query.xml** — для regression-теста.
-
-## Известные слабости детектора
-
-1. **Обфускация комментариями**: `UNION/*comment*/SELECT` — Phase 1 регулярка может промахнуться, но pglast AST ловит независимо от форматирования.
-2. **Двухступенчатые атаки**: `UNION` собирается не в одном запросе, а через несколько API-вызовов с накоплением state. Невозможно поймать на одном SQL.
-3. **Легитимные analytical-`UNION`** — будут FP без точной настройки правила; полагаемся на Phase 2 для отфильтровки.
+См. [solutions.md](solutions.md).

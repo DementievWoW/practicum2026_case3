@@ -38,95 +38,13 @@
 | **Только безопасные SQL** | Простой baseline для EX |
 | **С уязвимостями** | Тестируем судью + бонус +10 |
 
-## Наше решение (ADR-0006)
+## Внешние ссылки
 
-### Объёмы и состав
-
-| Класс | Кол-во | Источник SQL |
-|---|---|---|
-| Безопасные / эталонные | 200 | Ручная разработка по схеме |
-| `SELECT_STAR` | 10 | Ручные |
-| `DML_NO_WHERE` | 10 | Ручные |
-| `NO_PAGINATION` | 10 | Ручные |
-| `DIRECT_SENSITIVE` | 15 | Ручные |
-| `SQL_INJ_CLASSIC` | 15 | PortSwigger PG + sqlmap, адаптации |
-| `SQL_INJ_UNION` | 10 | sqlmap `union_query.xml` |
-| `SQL_INJ_TIME` | 10 | `pg_sleep` payloads |
-| `PRIV_ESCALATE` | 10 | PG docs примеры |
-| `PLPGSQL_UNSAFE` | 10 | `EXECUTE format/\|\|` антипаттерны |
-| **Итого** | **300 SQL** | **+10 за датасет с уязвимостями (≥ 50)** |
-
-На каждый SQL — **2 NL-варианта** (short + long) → 600 пар.
-
-### Пайплайн back-translation
-
-```
-Step A: SQL seed pool (300 SQL — ручные + адаптации PortSwigger/sqlmap)
-   │
-   ▼
-Step B: SQL-to-Text (Qwen-Coder 32B / GPT-4o-mini)
-   - объясни SQL пошагово
-   - сформулируй 2 NL-вопроса (short + long)
-   - оцени сложность easy/med/hard
-   - если уязвим — укажи vuln_class
-   - JSON-output
-   │
-   ▼
-Step C: Validation
-   - pglast.parse_sql() — синтаксически валиден
-   - для SELECT — исполнить в sandbox без ошибки
-   - NL содержит упоминание ключевых таблиц/колонок
-   - LLM-judge sanity check (low threshold)
-   │
-   ▼
-Step D: Human review
-   - спот-чек 20% выборки одним человеком (~2 часа)
-```
-
-### Train / Eval split
-- `train`: 240 SQL (= 80%), 480 NL-вариантов.
-- `eval`: 60 SQL (= 20%), 120 NL-вариантов.
-- Стратификация по `vuln_class` и `difficulty`.
-- Seed=42, версионируется в `data/splits/v1.json`.
-
-### Quality gate перед merge
-1. 100% примеров парсятся `pglast` без ошибок.
-2. 100% безопасных SELECT исполняются в sandbox.
-3. 100% примеров с `vuln_class != "safe"` детектируются хотя бы одним Phase 1 правилом (ADR-0004) — sanity check, что правила и датасет согласованы.
-
-## Trade-off
-
-**Стоимость:** 300 SQL × ~3 минуты ручной работы = ~10 часов на одного человека. По распределению ролей из `take1` это «подготовка данных» — один человек.
-
-**Бюджет на LLM:** back-translation 600 NL × ~2K токенов = 1.2M токенов. GPT-4o-mini @ $0.15/1M ≈ **$0.20** на синтез всего датасета. Бесплатно.
-
-**Риск:** LLM может ошибиться в `vuln_class` метке. Митигация — quality-gate «Phase 1 должен подтвердить класс».
-
-## Что измеряем
-
-| Метрика | Цель | Что показывает |
-|---|---|---|
-| Размер eval | ≥ 100 NL-пар | Достаточно для статистики |
-| Стратификация по difficulty | хотя бы 20% каждой группы | Покрытие spectrum |
-| Class balance (vuln vs safe) | ~33% / 67% | Разумный distribution |
-| Recall@iterAny по каждому `vuln_class` | ≥ 0.80 | Аудитор реально работает |
-| Inter-rater agreement по 20% спот-чека | ≥ 0.85 | Качество разметки |
-| Стоимость синтеза | < $5 | Бюджет |
-
-## Связи
-
-- **ADR-0006** — Dataset synthesis via SQL-to-Text back-translation.
-- **ADR-0007** — Execution Accuracy methodology (потребитель eval-set).
-- **ADR-0003** — генератор (потребитель train-set для few-shot).
-- **ADR-0004** — sanity check «Phase 1 подтверждает vuln_class».
 - **research/05_peripheral.md** § 1 — OmniSQL, SING-SQL.
 - **research/materials/05-security-benchmarks-datasets/** — внешние датасеты для адаптации payloads.
 - **research/materials/05-security-benchmarks-datasets/rbsqli-10m/** — 10M payloads, source для SQL_INJ-семейства.
 - **research/materials/05-security-benchmarks-datasets/securesql-benchmark/** — 932 примера утечек, source для DIRECT_SENSITIVE.
 
-## Что может пойти не так
+## Варианты решения
 
-1. **Faker-данные не покрывают реальные распределения** → `gold_sql` возвращает 0 строк → ложный EX=1 на двух пустых выборках. Митигация: при сидинге проверяем `len(gold_result) > 0`.
-2. **LLM генерирует слишком «гладкий» русский** — все NL похожи стилем, не отражают реальных аналитиков. Митигация: 2 формулировки на SQL (short/long) + 20% human review с явной инструкцией «парафразируй разговорно».
-3. **Дрейф domain knowledge** — за полгода схема `data_model_sql/` может измениться, eval-set «протухнет». Митигация: версионирование (`v1.json`).
-4. **Утечка train→eval** через эмбеддинг похожих формулировок. Митигация: при сплите дополнительно проверяем cosine между train и eval, отсекаем cosine > 0.9.
+См. [solutions.md](solutions.md).
