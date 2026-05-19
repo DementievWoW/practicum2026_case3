@@ -48,7 +48,8 @@ def save_notebook(cells: list, filename: str) -> str:
     """
     @brief Записывает список ячеек как .ipynb.
     @param cells Список dict-ов от md() / code().
-    @param filename Имя файла (без пути).
+    @param filename Имя файла с относительным путём от OUT_DIR
+                    (напр. "vulnerabilities/01_xxx.ipynb").
     @return Полный путь к созданному файлу.
     """
     nb = {
@@ -69,6 +70,7 @@ def save_notebook(cells: list, filename: str) -> str:
         "nbformat_minor": 5,
     }
     path = os.path.join(OUT_DIR, filename)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(nb, f, indent=1, ensure_ascii=False)
     print(f"✓ {filename}")
@@ -135,6 +137,8 @@ def footer_cell(problem_dir: str) -> dict:
     @brief Возвращает md-ячейку с финальными ссылками.
     @param problem_dir Имя папки в problems/vulnerabilities/, напр.
                        '01-sql-injection-classic'.
+    @note  Ссылки относительные от simulations/vulnerabilities/NN_xxx.ipynb,
+           поэтому до корня репо — ../../.
     """
     return md(f"""\
         ## Итог
@@ -149,8 +153,8 @@ def footer_cell(problem_dir: str) -> dict:
 
         ## Куда дальше
 
-        - **Описание уязвимости (под микроскопом):** [problems/vulnerabilities/{problem_dir}/README.md](../problems/vulnerabilities/{problem_dir}/README.md)
-        - **Варианты решения + почему так:** [problems/vulnerabilities/{problem_dir}/solutions.md](../problems/vulnerabilities/{problem_dir}/solutions.md)
-        - **Архитектура цикла:** [docs/adr/0002-loop-architecture-langgraph.md](../docs/adr/0002-loop-architecture-langgraph.md)
-        - **Гибридный аудитор (pglast + LLM):** [docs/adr/0004-hybrid-auditor-ast-plus-llm.md](../docs/adr/0004-hybrid-auditor-ast-plus-llm.md)
+        - **Описание уязвимости (под микроскопом):** [problems/vulnerabilities/{problem_dir}/README.md](../../problems/vulnerabilities/{problem_dir}/README.md)
+        - **Варианты решения + почему так:** [problems/vulnerabilities/{problem_dir}/solutions.md](../../problems/vulnerabilities/{problem_dir}/solutions.md)
+        - **Архитектура цикла:** [docs/adr/0002-loop-architecture-langgraph.md](../../docs/adr/0002-loop-architecture-langgraph.md)
+        - **Гибридный аудитор (pglast + LLM):** [docs/adr/0004-hybrid-auditor-ast-plus-llm.md](../../docs/adr/0004-hybrid-auditor-ast-plus-llm.md)
         """)

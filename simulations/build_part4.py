@@ -7,7 +7,10 @@ from build_helpers import md, code, COMMON_PREAMBLE
 
 
 def eng_footer(problem_dir: str):
-    """@brief Финальные ссылки для engineering-ноутбуков."""
+    """
+    @brief Финальные ссылки для engineering-ноутбуков.
+    @note Пути ../../ — ноутбук лежит в simulations/engineering/.
+    """
     return md(f"""\
         ## Итог
 
@@ -15,9 +18,9 @@ def eng_footer(problem_dir: str):
 
         ## Куда дальше
 
-        - **Описание проблемы:** [problems/engineering/{problem_dir}/README.md](../problems/engineering/{problem_dir}/README.md)
-        - **Варианты решения + почему так:** [problems/engineering/{problem_dir}/solutions.md](../problems/engineering/{problem_dir}/solutions.md)
-        - **Архитектура цикла:** [docs/adr/0002-loop-architecture-langgraph.md](../docs/adr/0002-loop-architecture-langgraph.md)
+        - **Описание проблемы:** [problems/engineering/{problem_dir}/README.md](../../problems/engineering/{problem_dir}/README.md)
+        - **Варианты решения + почему так:** [problems/engineering/{problem_dir}/solutions.md](../../problems/engineering/{problem_dir}/solutions.md)
+        - **Архитектура цикла:** [docs/adr/0002-loop-architecture-langgraph.md](../../docs/adr/0002-loop-architecture-langgraph.md)
         """)
 
 
