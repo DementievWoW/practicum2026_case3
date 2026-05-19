@@ -1,4 +1,4 @@
-# Simulations — 9 уязвимостей под микроскопом, в виде Jupyter-ноутбуков
+# Simulations — 9 уязвимостей + 6 инженерных вызовов в виде Jupyter-ноутбуков
 
 Каждый ноутбук — самодостаточный сценарий на одной уязвимости. Открывается в Google Colab, работает без внешних зависимостей (только stdlib + `sqlite3`, который есть в Colab из коробки).
 
@@ -38,6 +38,8 @@ https://colab.research.google.com/github/<USER>/<REPO>/blob/master/simulations/0
 
 ## Список ноутбуков
 
+### Уязвимости SQL (1–9)
+
 | # | Файл | Уязвимость | Риск | CWE |
 |---|---|---|---|---|
 | 01 | [01_sql_injection_classic.ipynb](01_sql_injection_classic.ipynb) | SQL Injection (классический) | 10/10 | CWE-89 |
@@ -49,6 +51,17 @@ https://colab.research.google.com/github/<USER>/<REPO>/blob/master/simulations/0
 | 07 | [07_direct_sensitive_access.ipynb](07_direct_sensitive_access.ipynb) | Прямой доступ к чувствительным полям | 6/10 | CWE-200/359 |
 | 08 | [08_select_star.ipynb](08_select_star.ipynb) | Избыточный SELECT * | 5/10 | CWE-1295 |
 | 09 | [09_no_pagination.ipynb](09_no_pagination.ipynb) | Неограниченный LIMIT | 4/10 | CWE-770 |
+
+### Инженерные вызовы (10–15)
+
+| # | Файл | Проблема | Что симулируем (всё на mock-функциях) |
+|---|---|---|---|
+| 10 | [10_schema_linking.ipynb](10_schema_linking.ipynb) | Schema linking на 60 таблицах | bag-of-words эмбеддинг + cosine + FK-замыкание, сравнение бюджета токенов |
+| 11 | [11_reflection_loop.ipynb](11_reflection_loop.ipynb) | Reflection-память: цикл учится | Mock generator+judge+reflector, A/B «с reflection vs без», % повторов rule_id |
+| 12 | [12_synthetic_dataset.ipynb](12_synthetic_dataset.ipynb) | Синтез датасета (back-translation) | SQL→NL pattern-based, валидация в sandbox, quality-gate, train/eval split |
+| 13 | [13_llm_judge_unreliability.ipynb](13_llm_judge_unreliability.ipynb) | LLM-as-judge ненадёжен | 4 кейса (FP/FN/TP/TN), сравнение rules-only vs LLM-only vs гибрид |
+| 14 | [14_latency_budget.ipynb](14_latency_budget.ipynb) | Бюджет 40 секунд | Симуляция времён узлов, budget cap, graceful degradation, p50/p95/p99 |
+| 15 | [15_model_size.ipynb](15_model_size.ipynb) | Модель ≤ 30B параметров | LLMClient контракт, 3 mock-модели (S/M/L), cost-калькулятор eval-set |
 
 ## Где «не на 100% реалистично»
 

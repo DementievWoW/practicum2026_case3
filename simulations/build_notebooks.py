@@ -17,10 +17,13 @@ from build_helpers import save_notebook  # noqa: E402
 from build_part1 import build_01, build_02, build_03  # noqa: E402
 from build_part2 import build_04, build_05, build_06  # noqa: E402
 from build_part3 import build_07, build_08, build_09  # noqa: E402
+from build_part4 import build_10, build_11, build_12  # noqa: E402
+from build_part5 import build_13, build_14, build_15  # noqa: E402
 
 
 def main() -> None:
     """@brief Генерирует все .ipynb в simulations/."""
+    # Уязвимости (9)
     save_notebook(build_01(), "01_sql_injection_classic.ipynb")
     save_notebook(build_02(), "02_sql_injection_union.ipynb")
     save_notebook(build_03(), "03_sql_injection_time_blind.ipynb")
@@ -30,7 +33,14 @@ def main() -> None:
     save_notebook(build_07(), "07_direct_sensitive_access.ipynb")
     save_notebook(build_08(), "08_select_star.ipynb")
     save_notebook(build_09(), "09_no_pagination.ipynb")
-    print(f"\nГотово — 9 ноутбуков в {os.path.dirname(os.path.abspath(__file__))}/")
+    # Инженерные вызовы (6)
+    save_notebook(build_10(), "10_schema_linking.ipynb")
+    save_notebook(build_11(), "11_reflection_loop.ipynb")
+    save_notebook(build_12(), "12_synthetic_dataset.ipynb")
+    save_notebook(build_13(), "13_llm_judge_unreliability.ipynb")
+    save_notebook(build_14(), "14_latency_budget.ipynb")
+    save_notebook(build_15(), "15_model_size.ipynb")
+    print(f"\nГотово — 15 ноутбуков в {os.path.dirname(os.path.abspath(__file__))}/")
 
 
 if __name__ == "__main__":
