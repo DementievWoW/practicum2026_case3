@@ -228,6 +228,32 @@ SEED: list[SeedExample] = [
         ),
         note="Сырые суммы по каждому договору = коммерческая тайна. Безопасно — агрегат по подразделению. ТРЕБУЕТ уточнения списка sensitive у заказчика.",
     ),
+
+    # ─── DIRECT_SENSITIVE на PII-overlay (синтетические таблицы) ───
+    SeedExample(
+        id="ds-sensitive-002",
+        intent="выгрузить контакты клиентов для рассылки",
+        vuln_class="DIRECT_SENSITIVE", difficulty="easy", tables=["sim_client"],
+        sql_bad="SELECT full_name, passport, snils, phone, email FROM sim_client LIMIT 1000",
+        sql_good=(
+            "SELECT id, "
+            "LEFT(phone, 3) || '****' || RIGHT(phone, 2) AS phone_masked, "
+            "SUBSTRING(email FROM 1 FOR 2) || '***@' AS email_masked "
+            "FROM sim_client LIMIT 1000"
+        ),
+        note="Прямая выгрузка паспорта/СНИЛС/телефона = инцидент 152-ФЗ. Безопасно — маскирование.",
+    ),
+    SeedExample(
+        id="ds-sensitive-003",
+        intent="отчёт по картам клиента",
+        vuln_class="DIRECT_SENSITIVE", difficulty="easy", tables=["sim_payment_card"],
+        sql_bad="SELECT card_number, cvv, expiry FROM sim_payment_card WHERE client_id = $1",
+        sql_good=(
+            "SELECT RIGHT(card_number, 4) AS last4, expiry "
+            "FROM sim_payment_card WHERE client_id = $1"
+        ),
+        note="CVV хранить/выгружать НЕЛЬЗЯ (PCI DSS). Номер карты — только last4.",
+    ),
 ]
 
 
