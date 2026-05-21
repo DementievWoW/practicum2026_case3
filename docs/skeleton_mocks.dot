@@ -1,0 +1,191 @@
+// КАРТА ЗАГЛУШЕК — что мокаем для walking skeleton, кто пишет реальное.
+// Тимлид собирает скелет на заглушках; команда подменяет их реализациями.
+// Статус: КРАСНЫЙ=мок LLM · ГОЛУБОЙ=заглушка (пишет роль) · ЗЕЛЁНЫЙ=делает тимлид.
+// Рендер: dot -Tpng docs/skeleton_mocks.dot -o docs/skeleton_mocks.png
+digraph Skeleton {
+    rankdir=TB;
+    compound=true;
+    fontname="Helvetica";
+    bgcolor="white";
+    nodesep=0.35; ranksep=0.6;
+    node [shape=plaintext, fontname="Helvetica"];
+    edge [fontname="Helvetica", fontsize=9, color="#555555"];
+
+    task   [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#ECEFF1">
+        <tr><td><b>task (NL)</b></td></tr></table>>];
+    result [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#ECEFF1">
+        <tr><td><b>SystemResult</b></td></tr>
+        <tr><td bgcolor="#A5D6A7">🟢 тимлид (контракт baseline)</td></tr></table>>];
+
+    // ═══════════ Schema layer ═══════════
+    subgraph cluster_schema {
+        label="Schema layer";
+        labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
+        style="rounded,filled"; color="#1E88E5"; fillcolor="#E3F2FD";
+
+        ddl_parser [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#CE93D8">
+            <tr><td><b>DDL-парсер</b></td></tr>
+            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Данные</td></tr></table>>];
+        catalog [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
+            <tr><td><b>schema_catalog</b></td></tr>
+            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Данные</td></tr></table>>];
+        card [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>карточки таблиц to_card()</b></td></tr>
+            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Данные</td></tr></table>>];
+        sch_embed [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
+            <tr><td><b>эмбеддинг карточек (e5)</b></td></tr>
+            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Данные</td></tr></table>>];
+        faiss_idx [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
+            <tr><td><b>FAISS index</b></td></tr>
+            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Данные</td></tr></table>>];
+
+        ddl_parser -> catalog -> card -> sch_embed -> faiss_idx;
+    }
+
+    // ═══════════ Генератор ═══════════
+    subgraph cluster_gen {
+        label="Генератор SQL";
+        labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
+        style="rounded,filled"; color="#FB8C00"; fillcolor="#FFF3E0";
+
+        g_search [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>schema linking (FAISS top-15)</b></td></tr>
+            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: LLM-инженер</td></tr></table>>];
+        g_fk [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>FK-замыкание</b></td></tr>
+            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Данные</td></tr></table>>];
+        g_fewshot [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>few-shot retrieval</b></td></tr>
+            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: LLM-инженер</td></tr></table>>];
+        g_prompt [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>сборка промпта</b></td></tr>
+            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: LLM-инженер</td></tr></table>>];
+        g_llm [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
+            <tr><td><b>LLM генератор · Qwen-32B</b></td></tr>
+            <tr><td bgcolor="#FF8A65"><b>🟧 МОК · MockLLMClient → LLM-инженер</b></td></tr></table>>];
+
+        g_search -> g_fk -> g_prompt -> g_llm;
+        g_fewshot -> g_prompt;
+    }
+
+    // ═══════════ Судья ═══════════
+    subgraph cluster_aud {
+        label="Судья (аудитор)";
+        labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
+        style="rounded,filled"; color="#2E7D32"; fillcolor="#E8F5E9";
+
+        subgraph cluster_p1 {
+            label="Phase 1 — алгоритмы";
+            labeljust="l"; fontsize=11; style="rounded,filled"; color="#43A047"; fillcolor="#F1F8E9";
+            sql_parser [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#CE93D8">
+                <tr><td><b>SQL-парсер pglast</b></td></tr>
+                <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Тулзы</td></tr></table>>];
+            rules [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+                <tr><td><b>правила R001-R013</b></td></tr>
+                <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Тулзы</td></tr></table>>];
+            sensitive [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+                <tr><td><b>детектор sensitive R009</b></td></tr>
+                <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Тулзы</td></tr></table>>];
+            explain [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+                <tr><td><b>EXPLAIN-анализ</b></td></tr>
+                <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Тулзы</td></tr></table>>];
+            sql_parser -> rules;
+        }
+        subgraph cluster_p15 {
+            label="Phase 1.5 — ML";
+            labeljust="l"; fontsize=11; style="rounded,filled"; color="#43A047"; fillcolor="#F1F8E9";
+            codebert [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
+                <tr><td><b>CodeBERT classifier</b></td></tr>
+                <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Тулзы (бонус)</td></tr></table>>];
+        }
+        subgraph cluster_p2 {
+            label="Phase 2 — LLM + RAG";
+            labeljust="l"; fontsize=11; style="rounded,filled"; color="#43A047"; fillcolor="#F1F8E9";
+            rag [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+                <tr><td><b>RAG retrieval</b></td></tr>
+                <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Тулзы</td></tr></table>>];
+            judge_llm [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
+                <tr><td><b>LLM судья · Qwen-7B</b></td></tr>
+                <tr><td bgcolor="#FF8A65"><b>🟧 МОК · MockLLMClient → LLM-инженер</b></td></tr></table>>];
+            rag -> judge_llm;
+        }
+        aggregate [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>агрегатор вердикта</b></td></tr>
+            <tr><td bgcolor="#A5D6A7">🟢 тимлид (склейка findings)</td></tr></table>>];
+
+        rules -> aggregate; sensitive -> aggregate; explain -> aggregate;
+        codebert -> aggregate; judge_llm -> aggregate;
+    }
+
+    // ═══════════ Reflector ═══════════
+    subgraph cluster_refl {
+        label="Reflector (in-context loop)";
+        labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
+        style="rounded,filled"; color="#2E7D32"; fillcolor="#E8F5E9";
+        refl_model [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
+            <tr><td><b>reflector · Qwen-7B / FLAN-T5</b></td></tr>
+            <tr><td bgcolor="#FF8A65"><b>🟧 МОК · детермин. заглушка → LLM-инженер</b></td></tr></table>>];
+        refl_dedup [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>дедуп + окно 5</b></td></tr>
+            <tr><td bgcolor="#A5D6A7">🟢 тимлид</td></tr></table>>];
+        refl_model -> refl_dedup;
+    }
+
+    // ═══════════ Оркестратор (зона тимлида) ═══════════
+    subgraph cluster_orch {
+        label="Оркестратор  —  СОБИРАЕТ ТИМЛИД";
+        labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
+        style="rounded,filled"; color="#1E88E5"; fillcolor="#E8F5E9";
+        cycle [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>цикл gen→audit→reflect</b></td></tr>
+            <tr><td bgcolor="#A5D6A7">🟢 тимлид (pipeline.py)</td></tr></table>>];
+        decide [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFF9C4">
+            <tr><td><b>approved? (risk &lt; 4.0)</b></td></tr>
+            <tr><td bgcolor="#A5D6A7">🟢 тимлид</td></tr></table>>];
+        contracts [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
+            <tr><td><b>контракты (Finding, Lesson, LLMClient)</b></td></tr>
+            <tr><td bgcolor="#A5D6A7">🟢 тимлид (зафиксированы)</td></tr></table>>];
+        persist [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
+            <tr><td><b>PostgresSaver</b></td></tr>
+            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Аналитик/DevOps</td></tr></table>>];
+        cycle -> decide;
+    }
+
+    // ═══════════ Инфраструктура ═══════════
+    subgraph cluster_infra {
+        label="Инфраструктура / хранилища";
+        labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
+        style="rounded,filled"; color="#607D8B"; fillcolor="#FAFAFA";
+        sandbox [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
+            <tr><td><b>Postgres sandbox</b></td></tr>
+            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Данные/DevOps</td></tr></table>>];
+        vstore [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
+            <tr><td><b>Vector store</b></td></tr>
+            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Тулзы</td></tr></table>>];
+        langfuse [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
+            <tr><td><b>Langfuse</b></td></tr>
+            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Аналитик</td></tr></table>>];
+    }
+
+    // ═══════════ ПОТОК ═══════════
+    task -> cycle [lhead=cluster_orch];
+    cycle -> g_prompt [lhead=cluster_gen, label="1. генерация"];
+    faiss_idx -> g_search [ltail=cluster_schema, style=dotted];
+    g_llm -> sql_parser [lhead=cluster_aud, label="2. sql_candidate"];
+    explain -> sandbox [ltail=cluster_p1, style=dotted, dir=both];
+    rag -> vstore [style=dotted, dir=both];
+    aggregate -> decide [ltail=cluster_aud, lhead=cluster_orch, label="AuditResult"];
+    decide -> refl_model [lhead=cluster_refl, label="нет", color="#E53935", fontcolor="#E53935"];
+    refl_dedup -> g_prompt [ltail=cluster_refl, lhead=cluster_gen, label="reflection", style=dashed, color="#8E24AA", fontcolor="#8E24AA", constraint=false];
+    decide -> result [label="да", color="#43A047", fontcolor="#43A047"];
+    cycle -> langfuse [style=dotted, color="#BDBDBD"];
+
+    // ═══════════ Легенда ═══════════
+    subgraph cluster_leg {
+        label="Кто что делает"; labeljust="l"; fontsize=12; style="rounded"; color="#BDBDBD";
+        leg [label=<<table border="0" cellborder="1" cellspacing="0">
+            <tr><td bgcolor="#A5D6A7">🟢 тимлид — собирает скелет (оркестратор, контракты, заглушки)</td></tr>
+            <tr><td bgcolor="#FF8A65">🟧 МОК LLM — MockLLMClient (потом реальный LLM)</td></tr>
+            <tr><td bgcolor="#B3E5FC">🔵 заглушка — пишет член команды (роль указана)</td></tr></table>>];
+    }
+}
