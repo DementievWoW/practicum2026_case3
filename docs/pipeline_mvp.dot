@@ -1,0 +1,63 @@
+// MVP-пайплайн «как реализовано» (walking skeleton).
+// Рендер: dot -Tpng docs/pipeline_mvp.dot -o docs/pipeline_mvp.png
+digraph MVP {
+    rankdir=TB;
+    fontname="Helvetica";
+    bgcolor="white";
+    nodesep=0.35; ranksep=0.5;
+    node [fontname="Helvetica", fontsize=11, style="filled,rounded", shape=box];
+    edge [fontname="Helvetica", fontsize=9, color="#555555"];
+
+    // ── вход/выход ──
+    task   [label="task (NL)\n«покажи активные договоры»", shape=ellipse, fillcolor="#ECEFF1", color="#90A4AE"];
+    result [label="SystemResult\nfinal_sql · audit_log · risk_trajectory", shape=ellipse, fillcolor="#E8F5E9", color="#43A047"];
+
+    // ── оркестратор ──
+    pipe [label="SQLSecurityPipeline.run()\n(src/case3/pipeline.py)\nцикл до max_iterations=5", fillcolor="#E3F2FD", color="#1E88E5"];
+
+    // ── узлы цикла ──
+    gen [label="LLMGenerator.generate()\nпромпт + reflection-память\n● LLM = MockLLMClient", fillcolor="#FFE0B2", color="#FB8C00"];
+
+    subgraph cluster_aud {
+        label="HybridAuditor.audit()";
+        labeljust="l"; fontsize=11; style="rounded"; color="#26A69A"; bgcolor="#E0F2F1";
+        p1 [label="Phase 1 — РЕАЛЬНО\nрегекс-правила R001..R013\n+ детектор sensitive (R009)", fillcolor="#C8E6C9", color="#43A047"];
+        p2 [label="Phase 2 — триаж\n● LLM = MockLLMClient", fillcolor="#FFE0B2", color="#FB8C00"];
+        p1 -> p2 [label="findings"];
+    }
+
+    dec [label="approved?\n(risk < 4.0)", shape=diamond, fillcolor="#FFF9C4", color="#FBC02D"];
+    refl [label="Reflector.reflect() — РЕАЛЬНО\nfindings → Lesson (детерминир.)", fillcolor="#C8E6C9", color="#43A047"];
+    fin [label="finalize\nсборка SystemResult", fillcolor="#C8E6C9", color="#43A047"];
+
+    // ── артефакты (данные) ──
+    subgraph cluster_art {
+        label="Артефакты (готовы)";
+        labeljust="l"; fontsize=10; style="rounded"; color="#BDBDBD"; bgcolor="#FAFAFA";
+        cat [label="schema_catalog.json\n60 таблиц, FK, comments", shape=cylinder, fillcolor="#CFD8DC", color="#607D8B"];
+        ds  [label="dataset_v1.jsonl\nseed → back-translation", shape=cylinder, fillcolor="#CFD8DC", color="#607D8B"];
+    }
+
+    // ── поток ──
+    task -> pipe;
+    pipe -> gen [label="iter N"];
+    gen -> p1 [label="sql_candidate"];
+    p2 -> dec [label="AuditResult"];
+    dec -> refl [label="нет", color="#E53935", fontcolor="#E53935"];
+    refl -> gen [label="reflection\n(in-context loop)", style=dashed, color="#8E24AA", fontcolor="#8E24AA"];
+    dec -> fin [label="да", color="#43A047", fontcolor="#43A047"];
+    fin -> result;
+
+    // связи с артефактами
+    cat -> gen [style=dotted, label="схема в промпт", constraint=false];
+    p1 -> cat [style=dotted, label="сверка таблиц", constraint=false];
+
+    // ── легенда ──
+    subgraph cluster_leg {
+        label="Легенда"; labeljust="l"; fontsize=10; style="rounded"; color="#BDBDBD"; bgcolor="white";
+        L1 [label="РЕАЛЬНЫЙ код (работает)", fillcolor="#C8E6C9", color="#43A047", width=2.6];
+        L2 [label="МОК (заглушка, заменится на LLM)", fillcolor="#FFE0B2", color="#FB8C00", width=2.6];
+        L3 [label="артефакт данных", fillcolor="#CFD8DC", color="#607D8B", width=2.6];
+        L1 -> L2 [style=invis]; L2 -> L3 [style=invis];
+    }
+}
