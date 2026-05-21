@@ -75,23 +75,24 @@ class MockLLMClient:
         """
         @brief Имитирует генератор SQL.
         @details
-            Если в промпте есть reflection-уроки (значит это retry),
-            «исправляет» соответствующие ошибки. Так виден reflection-loop.
+            Если в промпте есть reflection-уроки (это retry-итерация),
+            возвращает безопасный SQL — так виден reflection-loop:
+            iter1 уязвимо → iter2 (с уроками) чисто → approved.
+            Чистая версия выбирает НЕ чувствительные колонки (id, status),
+            иначе DIRECT_SENSITIVE не даст одобрить.
         """
-        fixed_star = "select_star" in prompt or "select *" in prompt
-        fixed_where = "dml_no_where" in prompt or "where" in prompt and "predicate" in prompt
-        fixed_limit = "no_pagination" in prompt or "limit" in prompt
+        CLEAN = "SELECT id, status FROM credit_contract WHERE status = 1 LIMIT 100"
+        DIRTY = "SELECT * FROM credit_contract"  # star + no WHERE + no LIMIT
 
         if self.scenario == "always_good":
-            return "SELECT id, credit_amount FROM credit_contract WHERE status = 1 LIMIT 100"
+            return CLEAN
         if self.scenario == "always_bad":
-            return "SELECT * FROM credit_contract"
+            return DIRTY
 
-        # scenario == "evolve": чиним по накопленным урокам
-        cols = "id, credit_amount" if fixed_star else "*"
-        where = " WHERE status = 1" if fixed_where else ""
-        limit = " LIMIT 100" if fixed_limit else ""
-        return f"SELECT {cols} FROM credit_contract{where}{limit}".strip()
+        # scenario == "evolve": если в промпте есть уроки reflection — чиним
+        low = prompt.lower()
+        has_lessons = any(k in low for k in ("урок", "lesson", "reflection", "не используй", "не повторяй"))
+        return CLEAN if has_lessons else DIRTY
 
     # ── мок Phase 2 (LLM-судья) — формирует JSON-объяснение ───────────────
     def _mock_judge(self, prompt: str) -> str:
