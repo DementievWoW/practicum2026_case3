@@ -1,0 +1,71 @@
+// ДЕТАЛЬ: Оркестратор + Reflector + Инфраструктура (Участник 4 / 3). Обзор — target_overview.png
+// Рендер: dot -Tpng docs/target_core.dot -o docs/target_core.png
+digraph Core {
+    rankdir=TB;
+    compound=true;
+    fontname="Helvetica"; bgcolor="white";
+    nodesep=0.4; ranksep=0.7;
+    node [shape=plaintext, fontname="Helvetica"];
+    edge [fontname="Helvetica", fontsize=10, color="#555555"];
+    labelloc="t"; fontsize=15; fontname="Helvetica-Bold";
+    label="КОМПОНЕНТ: Оркестратор (Участник 4) + Reflector (Участник 3) + Инфраструктура";
+
+    subgraph cluster_orch {
+        label="Оркестратор — ядро системы · Участник 4";
+        labeljust="l"; fontsize=12; style="rounded,filled"; color="#1E88E5"; fillcolor="#E3F2FD";
+        cycle [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>LangGraph цикл</b></td></tr>
+            <tr><td align="left">@brief gen → audit → reflect, до 5 итер.</td></tr>
+            <tr><td bgcolor="#A5D6A7">🟢 готово (Python-цикл) · pipeline.py</td></tr></table>>];
+        decide [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFF9C4">
+            <tr><td><b>approved? (risk &lt; 4.0)</b></td></tr>
+            <tr><td bgcolor="#A5D6A7">🟢 готово · pipeline.py</td></tr></table>>];
+        persist [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
+            <tr><td><b>PostgresSaver</b></td></tr>
+            <tr><td align="left">@brief checkpoints, time-travel</td></tr>
+            <tr><td bgcolor="#ECEFF1">⬜ не написано → Участник 4</td></tr></table>>];
+        cycle -> decide; cycle -> persist [style=dotted];
+    }
+
+    subgraph cluster_refl {
+        label="Reflector — in-context loop · Участник 3";
+        labeljust="l"; fontsize=12; style="rounded,filled"; color="#8E24AA"; fillcolor="#F3E5F5";
+        refl_model [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
+            <tr><td><b>reflector · Qwen-7B / FLAN-T5</b></td></tr>
+            <tr><td align="left">@brief findings судьи → «урок»</td></tr>
+            <tr><td align="left">ЗАЧЕМ: генератор не повторяет ошибку</td></tr>
+            <tr><td bgcolor="#FFCC80">🟧 ЗАГЛУШКА (детермин.) · reflector.py · Участник 3</td></tr></table>>];
+        refl_dedup [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>дедуп + окно 5 уроков</b></td></tr>
+            <tr><td align="left">@brief память последних уроков</td></tr>
+            <tr><td bgcolor="#A5D6A7">🟢 готово · reflector.py</td></tr></table>>];
+        refl_model -> refl_dedup;
+    }
+
+    subgraph cluster_infra {
+        label="Инфраструктура / хранилища · Участник 4";
+        labeljust="l"; fontsize=12; style="rounded,filled"; color="#607D8B"; fillcolor="#FAFAFA";
+        sandbox [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
+            <tr><td><b>Postgres sandbox</b></td></tr>
+            <tr><td align="left">@brief EXPLAIN, faker, state</td></tr>
+            <tr><td bgcolor="#ECEFF1">⬜ не написано (есть overlay.sql) → Участник 4</td></tr></table>>];
+        vstore [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
+            <tr><td><b>Vector store</b></td></tr>
+            <tr><td align="left">@brief RAG + эмбеддинги схемы</td></tr>
+            <tr><td bgcolor="#ECEFF1">⬜ не написано → Участник 4</td></tr></table>>];
+        langfuse [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
+            <tr><td><b>Langfuse</b></td></tr>
+            <tr><td align="left">@brief трейсы, scoring, A/B</td></tr>
+            <tr><td bgcolor="#ECEFF1">⬜ не написано → Участник 4</td></tr></table>>];
+    }
+
+    // ── связи: цикл управляет, решение ветвится ──
+    decide -> refl_model [lhead=cluster_refl, label="не одобрено ✗", color="#E53935", fontcolor="#E53935"];
+    refl_dedup -> cycle [ltail=cluster_refl, lhead=cluster_orch, label="урок (loop, до 5)", style="dashed", color="#8E24AA", fontcolor="#8E24AA", constraint=false];
+    decide -> result [label="одобрено ✓", color="#43A047", fontcolor="#43A047"];
+    cycle -> langfuse [style=dotted, color="#BDBDBD", label="трейс", constraint=false];
+
+    result [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#C8E6C9">
+        <tr><td><b>SystemResult</b></td></tr>
+        <tr><td align="left">final_sql + audit_log</td></tr></table>>];
+}

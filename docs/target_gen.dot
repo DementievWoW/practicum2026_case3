@@ -1,0 +1,53 @@
+// ДЕТАЛЬ: КОМПОНЕНТ Генератор SQL (Участник 3). Обзор — target_overview.png
+// Рендер: dot -Tpng docs/target_gen.dot -o docs/target_gen.png
+digraph Gen {
+    rankdir=TB;
+    fontname="Helvetica"; bgcolor="white";
+    nodesep=0.4; ranksep=0.6;
+    node [shape=plaintext, fontname="Helvetica"];
+    edge [fontname="Helvetica", fontsize=10, color="#555555"];
+    labelloc="t"; fontsize=15; fontname="Helvetica-Bold";
+    label="КОМПОНЕНТ: Генератор SQL · Участник 3  —  NL → SQL по релевантной схеме";
+
+    in [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#E3F2FD">
+        <tr><td><b>вход</b></td></tr>
+        <tr><td align="left">NL-вопрос · FAISS+каталог (из Schema layer) · урок (из Reflector)</td></tr></table>>];
+
+    g_qembed [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
+        <tr><td><b>эмбеддинг вопроса (e5)</b></td></tr>
+        <tr><td align="left">@brief NL-вопрос → вектор</td></tr>
+        <tr><td align="left">ЗАЧЕМ: сравнить с карточками таблиц</td></tr>
+        <tr><td bgcolor="#ECEFF1">⬜ не написано → Участник 3</td></tr></table>>];
+    g_search [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+        <tr><td><b>schema linking — FAISS top-15</b></td></tr>
+        <tr><td align="left">@brief выбрать релевантные таблицы из 60</td></tr>
+        <tr><td align="left">ЗАЧЕМ: все 60 в промпт не влезут</td></tr>
+        <tr><td bgcolor="#ECEFF1">⬜ не написано → Участник 3</td></tr></table>>];
+    g_fk [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+        <tr><td><b>FK-замыкание</b></td></tr>
+        <tr><td align="left">@brief добавить таблицы по FK</td></tr>
+        <tr><td align="left">ЗАЧЕМ: JOIN не сломается</td></tr>
+        <tr><td bgcolor="#A5D6A7">🟢 готово · models.fk_closure()</td></tr></table>>];
+    g_fewshot [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+        <tr><td><b>few-shot retrieval</b></td></tr>
+        <tr><td align="left">@brief похожие примеры NL→SQL</td></tr>
+        <tr><td align="left">ЗАЧЕМ: модель пишет в нужном стиле</td></tr>
+        <tr><td bgcolor="#ECEFF1">⬜ не написано → Участник 3</td></tr></table>>];
+    g_prompt [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+        <tr><td><b>сборка промпта</b></td></tr>
+        <tr><td align="left">@brief DDL + few-shot + reflection</td></tr>
+        <tr><td align="left">ЗАЧЕМ: дать LLM весь контекст</td></tr>
+        <tr><td bgcolor="#A5D6A7">🟢 каркас готов · generator.py</td></tr></table>>];
+    g_llm [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
+        <tr><td><b>LLM генератор · Qwen2.5-Coder-32B</b></td></tr>
+        <tr><td align="left">@brief промпт → SQL</td></tr>
+        <tr><td align="left">ЗАЧЕМ: ядро — понять NL и написать SQL</td></tr>
+        <tr><td bgcolor="#FF8A65"><b>🟧 МОК · mock.py → Участник 3</b></td></tr></table>>];
+    out [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#E8F5E9">
+        <tr><td><b>→ в Судью</b></td></tr>
+        <tr><td align="left">SQL-кандидат</td></tr></table>>];
+
+    in -> g_qembed -> g_search -> g_fk -> g_prompt -> g_llm -> out;
+    g_fewshot -> g_prompt;
+    in -> g_fewshot [style=dotted, constraint=false];
+}

@@ -1,0 +1,80 @@
+// ДЕТАЛЬ: КОМПОНЕНТ Судья / аудитор (Участник 2). Обзор — target_overview.png
+// Рендер: dot -Tpng docs/target_judge.dot -o docs/target_judge.png
+digraph Judge {
+    rankdir=TB;
+    compound=true;
+    fontname="Helvetica"; bgcolor="white";
+    nodesep=0.4; ranksep=0.6;
+    node [shape=plaintext, fontname="Helvetica"];
+    edge [fontname="Helvetica", fontsize=10, color="#555555"];
+    labelloc="t"; fontsize=15; fontname="Helvetica-Bold";
+    label="КОМПОНЕНТ: Судья (аудитор) · Участник 2  —  алгоритмы + модели → вердикт risk";
+
+    in [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFF3E0">
+        <tr><td><b>вход</b></td></tr>
+        <tr><td align="left">SQL-кандидат (из Генератора)</td></tr></table>>];
+
+    subgraph cluster_p1 {
+        label="Phase 1 — детерминированно (алгоритмы)";
+        labeljust="l"; fontsize=12; style="rounded,filled"; color="#43A047"; fillcolor="#F1F8E9";
+        sql_parser [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#CE93D8">
+            <tr><td><b>SQL-парсер pglast</b></td></tr>
+            <tr><td align="left">@brief sql → AST</td></tr>
+            <tr><td align="left">ЗАЧЕМ: точнее регекса, устойчив к обфускации</td></tr>
+            <tr><td bgcolor="#ECEFF1">⬜ pglast не написан (пока regex) → Участник 2</td></tr></table>>];
+        rules [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>правила R001-R013</b></td></tr>
+            <tr><td align="left">@brief SELECT*, DML без WHERE, UNION...</td></tr>
+            <tr><td align="left">ЗАЧЕМ: 9 классов уязвимостей</td></tr>
+            <tr><td bgcolor="#FFCC80">🟧 ЗАГЛУШКИ (2 раб.+7 TODO) · auditor.py · Участник 2</td></tr></table>>];
+        sensitive [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>детектор sensitive R009</b></td></tr>
+            <tr><td align="left">@brief regex имён + Luhn/СНИЛС</td></tr>
+            <tr><td align="left">ЗАЧЕМ: паспорта/карты/пароли (152-ФЗ)</td></tr>
+            <tr><td bgcolor="#FFCC80">🟧 ЗАГЛУШКА · sensitive.py · Участник 2</td></tr></table>>];
+        explain [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>EXPLAIN-анализ</b></td></tr>
+            <tr><td align="left">@brief план: cost, seq scan, cartesian</td></tr>
+            <tr><td align="left">ЗАЧЕМ: тяжесть без исполнения данных</td></tr>
+            <tr><td bgcolor="#ECEFF1">⬜ не написано → Участник 2</td></tr></table>>];
+        sql_parser -> rules; rules -> sensitive [style=invis]; sensitive -> explain [style=invis];
+    }
+    subgraph cluster_p15 {
+        label="Phase 1.5 — ML";
+        labeljust="l"; fontsize=12; style="rounded,filled"; color="#43A047"; fillcolor="#F1F8E9";
+        codebert [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
+            <tr><td><b>CodeBERT classifier (SQLQueryShield)</b></td></tr>
+            <tr><td align="left">@brief sql → P(malicious/safe)</td></tr>
+            <tr><td align="left">ЗАЧЕМ: ловит что правила пропускают</td></tr>
+            <tr><td bgcolor="#ECEFF1">⬜ не написано (бонус) → Участник 2</td></tr></table>>];
+    }
+    subgraph cluster_p2 {
+        label="Phase 2 — LLM-триаж + RAG";
+        labeljust="l"; fontsize=12; style="rounded,filled"; color="#43A047"; fillcolor="#F1F8E9";
+        rag [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>RAG retrieval (BM25 + dense)</b></td></tr>
+            <tr><td align="left">@brief поиск CWE / CAPEC / OWASP</td></tr>
+            <tr><td align="left">ЗАЧЕМ: знания + верифицируемые ссылки</td></tr>
+            <tr><td bgcolor="#ECEFF1">⬜ не написано → Участник 2</td></tr></table>>];
+        judge_llm [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
+            <tr><td><b>LLM судья · Qwen2.5-7B</b></td></tr>
+            <tr><td align="left">@brief триаж findings + объяснение</td></tr>
+            <tr><td align="left">ЗАЧЕМ: отсеять FP, дать рекомендацию</td></tr>
+            <tr><td bgcolor="#FF8A65"><b>🟧 МОК · mock.py · модель: Участник 3</b></td></tr></table>>];
+        rag -> judge_llm;
+    }
+    aggregate [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+        <tr><td><b>агрегатор вердикта</b></td></tr>
+        <tr><td align="left">@brief risk = MAX; approved = risk &lt; 4.0</td></tr>
+        <tr><td bgcolor="#A5D6A7">🟢 готово · auditor.py (HybridAuditor)</td></tr></table>>];
+    out [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFF9C4">
+        <tr><td><b>→ Оркестратору</b></td></tr>
+        <tr><td align="left">AuditResult (findings + risk)</td></tr></table>>];
+
+    in -> sql_parser [lhead=cluster_p1];
+    rules -> codebert [ltail=cluster_p1, lhead=cluster_p15, label="sql"];
+    codebert -> rag [ltail=cluster_p15, lhead=cluster_p2, label="sql"];
+    rules -> aggregate; sensitive -> aggregate; explain -> aggregate; codebert -> aggregate;
+    judge_llm -> aggregate [ltail=cluster_p2];
+    aggregate -> out;
+}

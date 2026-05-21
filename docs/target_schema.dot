@@ -1,0 +1,43 @@
+// ДЕТАЛЬ: КОМПОНЕНТ Schema layer (Участник 1). Обзор — target_overview.png
+// Рендер: dot -Tpng docs/target_schema.dot -o docs/target_schema.png
+digraph Schema {
+    rankdir=TB;
+    fontname="Helvetica"; bgcolor="white";
+    nodesep=0.4; ranksep=0.6;
+    node [shape=plaintext, fontname="Helvetica"];
+    edge [fontname="Helvetica", fontsize=10, color="#555555"];
+    labelloc="t"; fontsize=15; fontname="Helvetica-Bold";
+    label="КОМПОНЕНТ: Schema layer · Участник 1  —  сырой DDL → поисковый индекс";
+
+    ddl_parser [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#CE93D8">
+        <tr><td><b>DDL-парсер (regex/pglast)</b></td></tr>
+        <tr><td align="left">@brief data_model.sql → структура</td></tr>
+        <tr><td align="left">ЗАЧЕМ: 657 KB SQL → таблицы, колонки, FK</td></tr>
+        <tr><td bgcolor="#FFCC80">🟧 ЗАГЛУШКА · parser.py · Участник 1</td></tr></table>>];
+    catalog [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
+        <tr><td><b>schema_catalog (60 таблиц)</b></td></tr>
+        <tr><td align="left">@brief каталог: credit_contract, acc_number...</td></tr>
+        <tr><td align="left">ЗАЧЕМ: единый источник схемы</td></tr>
+        <tr><td bgcolor="#A5D6A7">🟢 готово · models.py (структура)</td></tr></table>>];
+    card [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+        <tr><td><b>карточки таблиц — to_card()</b></td></tr>
+        <tr><td align="left">@brief таблица → текст «имя+коммент+колонки»</td></tr>
+        <tr><td align="left">ЗАЧЕМ: эмбеддить осмысленный текст</td></tr>
+        <tr><td bgcolor="#A5D6A7">🟢 готово · models.py</td></tr></table>>];
+    sch_embed [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
+        <tr><td><b>эмбеддинг карточек (multilingual-e5)</b></td></tr>
+        <tr><td align="left">@brief карточка → вектор (1024)</td></tr>
+        <tr><td align="left">ЗАЧЕМ: поиск таблиц по смыслу</td></tr>
+        <tr><td bgcolor="#ECEFF1">⬜ не написано → Участник 1</td></tr></table>>];
+    faiss_idx [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
+        <tr><td><b>FAISS index</b></td></tr>
+        <tr><td align="left">@brief индекс векторов 60 таблиц</td></tr>
+        <tr><td align="left">ЗАЧЕМ: мгновенный поиск top-K</td></tr>
+        <tr><td bgcolor="#ECEFF1">⬜ не написано → Участник 1</td></tr></table>>];
+    out [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFF3E0">
+        <tr><td><b>→ в Генератор</b></td></tr>
+        <tr><td align="left">FAISS для schema linking · каталог для DDL-в-промпт</td></tr></table>>];
+
+    ddl_parser -> catalog -> card -> sch_embed -> faiss_idx -> out;
+    catalog -> out [style=dotted, label="DDL", constraint=false];
+}
