@@ -1,0 +1,84 @@
+// ПОТОК с нумерацией шагов + роли участников.
+// Движение слева→направо; единственная обратная стрелка — петля итерации.
+// Рендер: dot -Tpng docs/flow.dot -o docs/flow.png
+digraph Flow {
+    rankdir=LR;
+    compound=true;
+    fontname="Helvetica";
+    bgcolor="white";
+    nodesep=0.45; ranksep=1.1;
+    node [fontname="Helvetica", fontsize=11, style="filled", penwidth=1.3];
+    edge [fontname="Helvetica-Bold", fontsize=11, color="#37474F", penwidth=1.5];
+
+    // ── вход ──
+    task [label="① task — NL-запрос\n«покажи договоры с просрочкой»", shape=ellipse, fillcolor="#ECEFF1", color="#90A4AE"];
+
+    // ── Schema layer (Участник 1) — подготовка, питает генератор ──
+    subgraph cluster_schema {
+        label="Schema layer · Участник 1 (парсер + фронт)";
+        labeljust="l"; fontsize=12; fontname="Helvetica-Bold";
+        style="rounded,filled"; color="#1E88E5"; fillcolor="#E3F2FD";
+        sc [label="DDL-парсер → schema_catalog →\nкарточки → эмбеддинги → FAISS", shape=box, fillcolor="#BBDEFB", color="#1E88E5"];
+    }
+
+    // ── ГЕНЕРАТОР (Участник 3) ──
+    subgraph cluster_gen {
+        label="ГЕНЕРАТОР SQL · Участник 3 (LLM)";
+        labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
+        style="rounded,filled"; color="#FB8C00"; fillcolor="#FFF3E0";
+        g1 [label="② schema linking\nFAISS top-15 + FK", shape=box, fillcolor="#FFE0B2", color="#FB8C00"];
+        g2 [label="③ сборка промпта\nDDL + few-shot + уроки", shape=box, fillcolor="#FFE0B2", color="#FB8C00"];
+        g3 [label="④ LLM генератор\nQwen-32B → SQL", shape=box, fillcolor="#FFCC80", color="#EF6C00"];
+        g1 -> g2 -> g3;
+    }
+
+    // ── СУДЬЯ (Участник 2) ──
+    subgraph cluster_aud {
+        label="СУДЬЯ (аудитор) · Участник 2";
+        labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
+        style="rounded,filled"; color="#2E7D32"; fillcolor="#E8F5E9";
+        a1 [label="⑥ Phase 1 (алгоритмы)\nправила R001-R013 + sensitive", shape=box, fillcolor="#C8E6C9", color="#43A047"];
+        a2 [label="⑦ Phase 2\nLLM-судья + RAG\n(LLM-модель: Участник 3)", shape=box, fillcolor="#FFCC80", color="#EF6C00"];
+        a3 [label="⑧ агрегатор\nrisk = MAX", shape=box, fillcolor="#C8E6C9", color="#43A047"];
+        a1 -> a2 -> a3;
+    }
+
+    // ── РЕШЕНИЕ (Участник 4) ──
+    decide [label="⑨ approved?\nrisk < 4.0\n· Участник 4", shape=diamond, fillcolor="#FFF9C4", color="#FBC02D"];
+
+    // ── РЕФЛЕКТОР (Участник 3) — петля итерации ──
+    subgraph cluster_refl {
+        label="REFLECTOR · Участник 3";
+        labeljust="l"; fontsize=12; fontname="Helvetica-Bold";
+        style="rounded,filled"; color="#8E24AA"; fillcolor="#F3E5F5";
+        r1 [label="⑩ findings → урок (Lesson)", shape=box, fillcolor="#E1BEE7", color="#8E24AA"];
+    }
+
+    // ── выход (Участник 4) ──
+    result [label="⑪ SystemResult\nfinal_sql + audit_log\n· Участник 4", shape=ellipse, fillcolor="#C8E6C9", color="#43A047"];
+    db [label="⑫ БД заказчика (PostgreSQL)\nисполняет платформа GreenData", shape=cylinder, fillcolor="#CFD8DC", color="#607D8B"];
+
+    // ═══════════ ГЛАВНЫЙ ПОТОК (слева → направо) ═══════════
+    task -> g1 [lhead=cluster_gen, label="①→②", color="#1E88E5", fontcolor="#1E88E5"];
+    sc -> g1 [ltail=cluster_schema, label="индекс схемы\n(подготовка)", style=dotted, color="#1E88E5", fontcolor="#1E88E5"];
+    g3 -> a1 [ltail=cluster_gen, lhead=cluster_aud, label="⑤ SQL-кандидат", color="#1E88E5", fontcolor="#1E88E5"];
+    a3 -> decide [ltail=cluster_aud, label="⑧→⑨ AuditResult", color="#1E88E5", fontcolor="#1E88E5"];
+    decide -> result [label="⑪ ОДОБРЕНО ✓", color="#43A047", fontcolor="#43A047"];
+    result -> db [label="⑫ одобренный SQL →", color="#43A047", fontcolor="#43A047"];
+
+    // ═══════════ ПЕТЛЯ ИТЕРАЦИИ (единственная обратная) ═══════════
+    decide -> r1 [lhead=cluster_refl, label="⑩ НЕ ОДОБРЕНО ✗", color="#E53935", fontcolor="#E53935"];
+    r1 -> g2 [ltail=cluster_refl, lhead=cluster_gen,
+              label="⟲ ИТЕРАЦИЯ +1\nурок в промпт (до 5 раз)",
+              style="dashed,bold", color="#8E24AA", fontcolor="#8E24AA", penwidth=2.2,
+              constraint=false];
+
+    // ── легенда ──
+    subgraph cluster_leg {
+        label="Обозначения"; labeljust="l"; fontsize=11; style="rounded"; color="#BDBDBD";
+        L1 [label="главный поток ①→⑫ (слева → направо)", shape=box, fillcolor="white", color="#1E88E5"];
+        L2 [label="одобрено → выдача SQL в БД", shape=box, fillcolor="white", color="#43A047"];
+        L3 [label="⟲ петля итерации (повтор шагов ②-⑨, до 5)", shape=box, fillcolor="white", color="#8E24AA"];
+        L1 -> L2 [style=invis]; L2 -> L3 [style=invis];
+    }
+}
