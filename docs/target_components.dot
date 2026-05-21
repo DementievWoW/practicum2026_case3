@@ -215,31 +215,20 @@ digraph Target {
     }
 
     // ═══════════ ПОТОК между компонентами ═══════════
-    // (А) невидимый «хребет» задаёт вертикальный порядок компонентов сверху→вниз
-    task      -> ddl_parser [style=invis, weight=30];
-    faiss_idx -> g_qembed   [style=invis, weight=30];
-
-    // (Б) ГЛАВНЫЙ ПОТОК сверху→вниз (формирует ранги: gen → судья → решение → выход)
-    g_llm -> sql_parser [lhead=cluster_aud, label="2. sql_candidate", weight=30, color="#1E88E5", fontcolor="#1E88E5"];
-    aggregate -> decide [ltail=cluster_aud, lhead=cluster_orch, label="3. AuditResult", weight=30, color="#1E88E5", fontcolor="#1E88E5"];
-    decide -> result [label="одобрено ✓", weight=30, color="#43A047", fontcolor="#43A047"];
-
-    // (В) оркестратор управляет генерацией (вбок, ранги не двигает)
-    task  -> cycle    [label="запрос", constraint=false];
-    cycle -> g_prompt [lhead=cluster_gen, label="1. генерация", constraint=false, color="#1E88E5", fontcolor="#1E88E5"];
-
-    // (Г) боковые связи-поставки (constraint=false → не растаскивают компоненты)
-    faiss_idx -> g_search [ltail=cluster_schema, style=dotted, label="индекс схемы", constraint=false];
-    catalog -> g_prompt   [style=dotted, label="DDL в промпт", constraint=false];
-    catalog -> rules      [style=dotted, label="сверка имён", constraint=false];
-    explain -> sandbox    [ltail=cluster_p1, style=dotted, dir=both, label="EXPLAIN", constraint=false];
-    rag -> vstore         [style=dotted, dir=both, label="поиск знаний", constraint=false];
-    cycle -> langfuse     [style=dotted, color="#BDBDBD", label="трейс", constraint=false];
-    cycle -> persist      [style=dotted, constraint=false];
-
-    // (Д) петля рефлексии (единственная обратная, constraint=false)
-    decide -> refl_model [lhead=cluster_refl, label="не одобрено ✗", color="#E53935", fontcolor="#E53935", constraint=false];
+    task -> cycle [lhead=cluster_orch, label="запрос"];
+    cycle -> g_prompt [lhead=cluster_gen, label="1. генерация"];
+    faiss_idx -> g_search [ltail=cluster_schema, style=dotted, label="индекс схемы"];
+    catalog -> g_prompt [style=dotted, label="DDL в промпт"];
+    g_llm -> sql_parser [lhead=cluster_aud, label="2. sql_candidate"];
+    catalog -> rules [style=dotted, label="сверка имён", constraint=false];
+    explain -> sandbox [ltail=cluster_p1, style=dotted, dir=both, label="EXPLAIN"];
+    rag -> vstore [style=dotted, dir=both, label="поиск знаний"];
+    aggregate -> decide [ltail=cluster_aud, lhead=cluster_orch, label="AuditResult"];
+    decide -> refl_model [lhead=cluster_refl, label="не одобрено", color="#E53935", fontcolor="#E53935"];
     refl_dedup -> g_prompt [ltail=cluster_refl, lhead=cluster_gen, label="reflection (loop)", style=dashed, color="#8E24AA", fontcolor="#8E24AA", constraint=false];
+    decide -> result [label="одобрено", color="#43A047", fontcolor="#43A047"];
+    cycle -> langfuse [style=dotted, color="#BDBDBD", label="трейс"];
+    cycle -> persist [style=dotted];
 
     // ═══════════ Легенды ═══════════
     subgraph cluster_leg1 {
