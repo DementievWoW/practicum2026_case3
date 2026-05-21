@@ -1,0 +1,149 @@
+// ЦЕЛЕВАЯ архитектура «как будет работать» — по компонентам-зонам.
+// Каждый компонент = слабо закрашенное поле; внутри — алгоритмы, модели, парсеры.
+// Рендер: dot -Tpng docs/target_components.dot -o docs/target_components.png
+digraph Target {
+    rankdir=TB;
+    compound=true;
+    fontname="Helvetica";
+    bgcolor="white";
+    nodesep=0.35; ranksep=0.6;
+    node [fontname="Helvetica", fontsize=10, style="filled", penwidth=1.2];
+    edge [fontname="Helvetica", fontsize=9, color="#555555"];
+
+    // Типы узлов (цвет = природа):
+    //   парсер   = shape=component, фиолетовый #CE93D8
+    //   алгоритм = shape=box,       голубой    #90CAF9
+    //   модель   = shape=box,       оранжевый  #FFB74D
+    //   данные   = shape=cylinder,  серый      #B0BEC5
+
+    task   [label="task (NL)\n«покажи договоры\nс просрочкой»", shape=ellipse, fillcolor="#ECEFF1"];
+    result [label="SystemResult\nfinal_sql + audit_log\n+ risk_trajectory", shape=ellipse, fillcolor="#C8E6C9"];
+
+    // ═══════════ КОМПОНЕНТ: Schema layer ═══════════
+    subgraph cluster_schema {
+        label="КОМПОНЕНТ: Schema layer  (подготовка схемы)";
+        labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
+        style="rounded,filled"; color="#1E88E5"; fillcolor="#E3F2FD";
+
+        ddl_parser [label="DDL-парсер\n(regex / pglast)\ndata_model.sql → catalog", shape=component, fillcolor="#CE93D8"];
+        catalog    [label="SchemaCatalog\n60 таблиц, FK, comments", shape=cylinder, fillcolor="#B0BEC5"];
+        sch_embed  [label="эмбеддинг таблиц\n(multilingual-e5)", fillcolor="#FFB74D"];
+        faiss_idx  [label="FAISS index\n(карточки таблиц)", shape=cylinder, fillcolor="#B0BEC5"];
+
+        ddl_parser -> catalog -> sch_embed -> faiss_idx;
+    }
+
+    // ═══════════ КОМПОНЕНТ: Генератор ═══════════
+    subgraph cluster_gen {
+        label="КОМПОНЕНТ: Генератор SQL";
+        labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
+        style="rounded,filled"; color="#FB8C00"; fillcolor="#FFF3E0";
+
+        g_qembed  [label="эмбеддинг вопроса\n(multilingual-e5)", fillcolor="#FFB74D"];
+        g_search  [label="schema linking\nFAISS top-15", fillcolor="#90CAF9"];
+        g_fk      [label="FK-замыкание\n(+ справочники)", fillcolor="#90CAF9"];
+        g_fewshot [label="few-shot retrieval\n(по similarity)", fillcolor="#90CAF9"];
+        g_prompt  [label="сборка промпта\nDDL + few-shot + reflection", fillcolor="#90CAF9"];
+        g_llm     [label="LLM генератор\nQwen2.5-Coder-32B", fillcolor="#FFB74D"];
+        g_tools   [label="tools: get_schema,\nget_sample_rows", shape=note, fillcolor="#FFF9C4"];
+
+        g_qembed -> g_search -> g_fk -> g_prompt;
+        g_fewshot -> g_prompt;
+        g_prompt -> g_llm;
+        g_tools -> g_llm [style=dotted];
+    }
+
+    // ═══════════ КОМПОНЕНТ: Судья (алгоритмы + модели) ═══════════
+    subgraph cluster_aud {
+        label="КОМПОНЕНТ: Судья (аудитор)  —  алгоритмы + модели";
+        labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
+        style="rounded,filled"; color="#2E7D32"; fillcolor="#E8F5E9";
+
+        // ── Phase 1: детерминированные алгоритмы ──
+        subgraph cluster_p1 {
+            label="Phase 1 — детерминированно (алгоритмы)";
+            labeljust="l"; fontsize=11; style="rounded,filled"; color="#43A047"; fillcolor="#F1F8E9";
+            sql_parser [label="SQL-парсер pglast\nsql → AST", shape=component, fillcolor="#CE93D8"];
+            rules      [label="правила R001-R013\n(обход AST)", fillcolor="#90CAF9"];
+            sensitive  [label="детектор sensitive R009\nregex + Luhn/СНИЛС", fillcolor="#90CAF9"];
+            explain    [label="EXPLAIN-анализ\n(cost, seq scan)", fillcolor="#90CAF9"];
+            sql_parser -> rules;
+        }
+        // ── Phase 1.5: лёгкая ML-модель ──
+        subgraph cluster_p15 {
+            label="Phase 1.5 — ML-классификатор";
+            labeljust="l"; fontsize=11; style="rounded,filled"; color="#43A047"; fillcolor="#F1F8E9";
+            codebert [label="CodeBERT classifier\n(SQLQueryShield)\nmalicious / safe", fillcolor="#FFB74D"];
+        }
+        // ── Phase 2: LLM-судья + RAG ──
+        subgraph cluster_p2 {
+            label="Phase 2 — LLM-триаж + RAG";
+            labeljust="l"; fontsize=11; style="rounded,filled"; color="#43A047"; fillcolor="#F1F8E9";
+            rag      [label="RAG retrieval\nBM25 + dense (CWE/CAPEC)", fillcolor="#90CAF9"];
+            judge_llm[label="LLM судья\nQwen2.5-7B", fillcolor="#FFB74D"];
+            rag -> judge_llm;
+        }
+        aggregate [label="агрегатор\nrisk = MAX, approved = risk<4.0\n→ AuditResult", fillcolor="#90CAF9"];
+
+        rules -> aggregate; sensitive -> aggregate; explain -> aggregate;
+        codebert -> aggregate; judge_llm -> aggregate;
+    }
+
+    // ═══════════ КОМПОНЕНТ: Reflector ═══════════
+    subgraph cluster_refl {
+        label="КОМПОНЕНТ: Reflector  (in-context loop)";
+        labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
+        style="rounded,filled"; color="#2E7D32"; fillcolor="#E8F5E9";
+        refl_model [label="reflector\nQwen-7B / FLAN-T5\nfindings → Lesson", fillcolor="#FFB74D"];
+        refl_dedup [label="дедуп + окно 5\n(память уроков)", fillcolor="#90CAF9"];
+        refl_model -> refl_dedup;
+    }
+
+    // ═══════════ КОМПОНЕНТ: Оркестратор ═══════════
+    subgraph cluster_orch {
+        label="КОМПОНЕНТ: Оркестратор";
+        labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
+        style="rounded,filled"; color="#1E88E5"; fillcolor="#E3F2FD";
+        cycle   [label="LangGraph цикл\ngen→audit→reflect (≤5)", fillcolor="#90CAF9"];
+        persist [label="PostgresSaver\ncheckpoints / time-travel", shape=cylinder, fillcolor="#B0BEC5"];
+        decide  [label="approved?", shape=diamond, fillcolor="#FFF9C4"];
+        cycle -> decide;
+    }
+
+    // ═══════════ КОМПОНЕНТ: Инфраструктура ═══════════
+    subgraph cluster_infra {
+        label="КОМПОНЕНТ: Инфраструктура / хранилища";
+        labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
+        style="rounded,filled"; color="#607D8B"; fillcolor="#FAFAFA";
+        sandbox [label="Postgres sandbox\n(EXPLAIN, faker, state)", shape=cylinder, fillcolor="#B0BEC5"];
+        vstore  [label="Vector store\n(RAG: CWE/CAPEC + схема)", shape=cylinder, fillcolor="#B0BEC5"];
+        langfuse[label="Langfuse\n(трейсы, scoring)", shape=cylinder, fillcolor="#B0BEC5"];
+    }
+
+    // ═══════════ ПОТОК между компонентами ═══════════
+    task -> cycle [lhead=cluster_orch, label="запрос"];
+    cycle -> g_prompt [lhead=cluster_gen, label="1. генерация"];
+    faiss_idx -> g_search [ltail=cluster_schema, style=dotted, label="индекс схемы"];
+    catalog -> g_prompt [style=dotted, label="DDL в промпт"];
+    g_llm -> sql_parser [lhead=cluster_aud, label="2. sql_candidate"];
+    catalog -> rules [style=dotted, label="сверка таблиц", constraint=false];
+    explain -> sandbox [ltail=cluster_p1, style=dotted, dir=both, label="EXPLAIN"];
+    rag -> vstore [style=dotted, dir=both, label="поиск знаний"];
+    aggregate -> decide [ltail=cluster_aud, lhead=cluster_orch, label="AuditResult"];
+    decide -> refl_model [lhead=cluster_refl, label="нет", color="#E53935", fontcolor="#E53935"];
+    refl_dedup -> g_prompt [ltail=cluster_refl, lhead=cluster_gen, label="reflection (loop)", style=dashed, color="#8E24AA", fontcolor="#8E24AA", constraint=false];
+    decide -> result [label="да", color="#43A047", fontcolor="#43A047"];
+    cycle -> langfuse [style=dotted, color="#BDBDBD", label="трейс"];
+    cycle -> persist [style=dotted];
+
+    // ═══════════ Легенда ═══════════
+    subgraph cluster_leg {
+        label="Легенда (природа узла)"; labeljust="l"; fontsize=12;
+        style="rounded"; color="#BDBDBD";
+        lp [label="парсер (текст → структура)", shape=component, fillcolor="#CE93D8"];
+        la [label="алгоритм (детерминированный)", shape=box, fillcolor="#90CAF9"];
+        lm [label="модель (ML / LLM)", shape=box, fillcolor="#FFB74D"];
+        ld [label="данные / хранилище", shape=cylinder, fillcolor="#B0BEC5"];
+        lp -> la -> lm -> ld [style=invis];
+    }
+}
