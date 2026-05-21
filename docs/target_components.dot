@@ -1,6 +1,7 @@
-// ЦЕЛЕВАЯ архитектура «как будет работать» — по компонентам-зонам.
-// В каждом узле: название · @brief (что делает) · ЗАЧЕМ (польза).
+// ЦЕЛЕВАЯ архитектура + СТАТУС РЕАЛИЗАЦИИ (где моки на сегодня).
+// В каждом узле: название · @brief · ЗАЧЕМ · СТАТУС.
 // Цвет узла: фиолетовый=парсер, голубой=алгоритм, оранжевый=модель, серый=данные.
+// Статус-строка: зелёная=готово, КРАСНАЯ=МОК, жёлтая=упрощено, серая=план.
 // Рендер: dot -Tpng docs/target_components.dot -o docs/target_components.png
 digraph Target {
     rankdir=TB;
@@ -17,34 +18,39 @@ digraph Target {
     result [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#C8E6C9">
         <tr><td><b>SystemResult</b></td></tr>
         <tr><td align="left">final_sql + audit_log + risk_trajectory</td></tr>
-        <tr><td align="left"><i>что отдаём пользователю/платформе</i></td></tr></table>>];
+        <tr><td bgcolor="#A5D6A7">✅ готово</td></tr></table>>];
 
     // ═══════════ КОМПОНЕНТ: Schema layer ═══════════
     subgraph cluster_schema {
-        label="КОМПОНЕНТ: Schema layer  —  превращаем сырой DDL в поисковый индекс";
+        label="КОМПОНЕНТ: Schema layer  —  сырой DDL → поисковый индекс";
         labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
         style="rounded,filled"; color="#1E88E5"; fillcolor="#E3F2FD";
 
         ddl_parser [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#CE93D8">
             <tr><td><b>DDL-парсер (regex/pglast)</b></td></tr>
             <tr><td align="left">@brief data_model.sql → структура</td></tr>
-            <tr><td align="left">ЗАЧЕМ: 657 KB сырого SQL неудобны;<br/>достаём таблицы, колонки, FK, комментарии</td></tr></table>>];
+            <tr><td align="left">ЗАЧЕМ: 657 KB SQL → таблицы, колонки, FK</td></tr>
+            <tr><td bgcolor="#A5D6A7">✅ готово · schema/parser.py</td></tr></table>>];
         catalog [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
             <tr><td><b>schema_catalog (60 таблиц)</b></td></tr>
             <tr><td align="left">@brief каталог: credit_contract, acc_number...</td></tr>
-            <tr><td align="left">ЗАЧЕМ: единый источник схемы для<br/>генератора и аудитора (сверка имён)</td></tr></table>>];
+            <tr><td align="left">ЗАЧЕМ: единый источник схемы</td></tr>
+            <tr><td bgcolor="#A5D6A7">✅ готово · schema_catalog.json</td></tr></table>>];
         card [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>карточки таблиц — to_card()</b></td></tr>
-            <tr><td align="left">@brief таблица → текст «имя + коммент + колонки»</td></tr>
-            <tr><td align="left">ЗАЧЕМ: эмбеддить надо осмысленный ТЕКСТ,<br/>а не сырую структуру</td></tr></table>>];
+            <tr><td align="left">@brief таблица → текст «имя+коммент+колонки»</td></tr>
+            <tr><td align="left">ЗАЧЕМ: эмбеддить надо осмысленный текст</td></tr>
+            <tr><td bgcolor="#A5D6A7">✅ готово · schema/models.py</td></tr></table>>];
         sch_embed [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
             <tr><td><b>эмбеддинг карточек (multilingual-e5)</b></td></tr>
-            <tr><td align="left">@brief карточка → вектор (1024 числа)</td></tr>
-            <tr><td align="left">ЗАЧЕМ: похожие по смыслу → близкие векторы;<br/>так ищем таблицы по смыслу вопроса</td></tr></table>>];
+            <tr><td align="left">@brief карточка → вектор (1024)</td></tr>
+            <tr><td align="left">ЗАЧЕМ: поиск таблиц по смыслу</td></tr>
+            <tr><td bgcolor="#ECEFF1">⬜ план (нужен sentence-transformers)</td></tr></table>>];
         faiss_idx [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
             <tr><td><b>FAISS index</b></td></tr>
-            <tr><td align="left">@brief индекс векторов всех 60 таблиц</td></tr>
-            <tr><td align="left">ЗАЧЕМ: мгновенный поиск top-K ближайших</td></tr></table>>];
+            <tr><td align="left">@brief индекс векторов 60 таблиц</td></tr>
+            <tr><td align="left">ЗАЧЕМ: мгновенный поиск top-K</td></tr>
+            <tr><td bgcolor="#ECEFF1">⬜ план</td></tr></table>>];
 
         ddl_parser -> catalog -> card -> sch_embed -> faiss_idx;
     }
@@ -58,27 +64,30 @@ digraph Target {
         g_qembed [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
             <tr><td><b>эмбеддинг вопроса (e5)</b></td></tr>
             <tr><td align="left">@brief NL-вопрос → вектор</td></tr>
-            <tr><td align="left">ЗАЧЕМ: сравнить с карточками таблиц</td></tr></table>>];
+            <tr><td bgcolor="#ECEFF1">⬜ план</td></tr></table>>];
         g_search [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>schema linking — FAISS top-15</b></td></tr>
             <tr><td align="left">@brief выбрать релевантные таблицы из 60</td></tr>
-            <tr><td align="left">ЗАЧЕМ: все 60 в промпт не влезут;<br/>без линкинга модель галлюцинирует имена</td></tr></table>>];
+            <tr><td align="left">ЗАЧЕМ: все 60 в промпт не влезут</td></tr>
+            <tr><td bgcolor="#ECEFF1">⬜ план (прототип в NB10)</td></tr></table>>];
         g_fk [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>FK-замыкание</b></td></tr>
-            <tr><td align="left">@brief добавить таблицы по внешним ключам</td></tr>
-            <tr><td align="left">ЗАЧЕМ: иначе JOIN сломается<br/>без справочной таблицы</td></tr></table>>];
+            <tr><td align="left">@brief добавить таблицы по FK</td></tr>
+            <tr><td align="left">ЗАЧЕМ: JOIN не сломается</td></tr>
+            <tr><td bgcolor="#A5D6A7">✅ готово · SchemaCatalog.fk_closure</td></tr></table>>];
         g_fewshot [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>few-shot retrieval</b></td></tr>
-            <tr><td align="left">@brief похожие примеры NL→SQL из датасета</td></tr>
-            <tr><td align="left">ЗАЧЕМ: модель пишет в нужном стиле,<br/>+3-5% точности</td></tr></table>>];
+            <tr><td align="left">@brief похожие примеры NL→SQL</td></tr>
+            <tr><td bgcolor="#ECEFF1">⬜ план</td></tr></table>>];
         g_prompt [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>сборка промпта</b></td></tr>
-            <tr><td align="left">@brief DDL + few-shot + reflection-уроки</td></tr>
-            <tr><td align="left">ЗАЧЕМ: дать LLM весь нужный контекст</td></tr></table>>];
+            <tr><td align="left">@brief DDL + few-shot + reflection</td></tr>
+            <tr><td bgcolor="#FFE082">⚠️ упрощено · generator._system_prompt</td></tr></table>>];
         g_llm [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
             <tr><td><b>LLM генератор · Qwen2.5-Coder-32B</b></td></tr>
             <tr><td align="left">@brief промпт → SQL</td></tr>
-            <tr><td align="left">ЗАЧЕМ: ядро — понять NL и написать SQL</td></tr></table>>];
+            <tr><td align="left">ЗАЧЕМ: ядро — понять NL и написать SQL</td></tr>
+            <tr><td bgcolor="#FF8A65"><b>🟧 МОК · MockLLMClient</b></td></tr></table>>];
 
         g_qembed -> g_search -> g_fk -> g_prompt -> g_llm;
         g_fewshot -> g_prompt;
@@ -91,51 +100,58 @@ digraph Target {
         style="rounded,filled"; color="#2E7D32"; fillcolor="#E8F5E9";
 
         subgraph cluster_p1 {
-            label="Phase 1 — детерминированно (алгоритмы): быстро, надёжно, аудируемо";
+            label="Phase 1 — детерминированно (алгоритмы)";
             labeljust="l"; fontsize=11; style="rounded,filled"; color="#43A047"; fillcolor="#F1F8E9";
             sql_parser [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#CE93D8">
                 <tr><td><b>SQL-парсер pglast</b></td></tr>
-                <tr><td align="left">@brief sql → AST (дерево разбора)</td></tr>
-                <tr><td align="left">ЗАЧЕМ: анализ структуры точнее регекса,<br/>устойчив к форматированию/обфускации</td></tr></table>>];
+                <tr><td align="left">@brief sql → AST</td></tr>
+                <tr><td align="left">ЗАЧЕМ: точнее регекса, устойчив к обфускации</td></tr>
+                <tr><td bgcolor="#FFE082">⚠️ упрощено · пока regex, не pglast</td></tr></table>>];
             rules [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
-                <tr><td><b>правила R001-R013 (обход AST)</b></td></tr>
-                <tr><td align="left">@brief SELECT*, DML без WHERE, UNION, и т.д.</td></tr>
-                <tr><td align="left">ЗАЧЕМ: детерминированно ловить<br/>9 классов уязвимостей</td></tr></table>>];
+                <tr><td><b>правила R001-R013</b></td></tr>
+                <tr><td align="left">@brief SELECT*, DML без WHERE, UNION...</td></tr>
+                <tr><td align="left">ЗАЧЕМ: 9 классов уязвимостей</td></tr>
+                <tr><td bgcolor="#A5D6A7">✅ готово · nodes/auditor.py (regex)</td></tr></table>>];
             sensitive [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
                 <tr><td><b>детектор sensitive R009</b></td></tr>
-                <tr><td align="left">@brief regex имён + Luhn/СНИЛС в значениях</td></tr>
-                <tr><td align="left">ЗАЧЕМ: найти паспорта/карты/пароли (152-ФЗ)</td></tr></table>>];
+                <tr><td align="left">@brief regex имён + Luhn/СНИЛС</td></tr>
+                <tr><td align="left">ЗАЧЕМ: паспорта/карты/пароли (152-ФЗ)</td></tr>
+                <tr><td bgcolor="#A5D6A7">✅ готово · audit/sensitive.py</td></tr></table>>];
             explain [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
                 <tr><td><b>EXPLAIN-анализ</b></td></tr>
-                <tr><td align="left">@brief план запроса: cost, seq scan, cartesian</td></tr>
-                <tr><td align="left">ЗАЧЕМ: оценить тяжесть БЕЗ исполнения данных</td></tr></table>>];
+                <tr><td align="left">@brief план: cost, seq scan, cartesian</td></tr>
+                <tr><td align="left">ЗАЧЕМ: тяжесть без исполнения данных</td></tr>
+                <tr><td bgcolor="#ECEFF1">⬜ план (нужен sandbox-Postgres)</td></tr></table>>];
             sql_parser -> rules;
         }
         subgraph cluster_p15 {
-            label="Phase 1.5 — ML-классификатор: ловит то, что правила пропускают";
+            label="Phase 1.5 — ML-классификатор";
             labeljust="l"; fontsize=11; style="rounded,filled"; color="#43A047"; fillcolor="#F1F8E9";
             codebert [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
                 <tr><td><b>CodeBERT classifier (SQLQueryShield)</b></td></tr>
-                <tr><td align="left">@brief sql → P(malicious / safe)</td></tr>
-                <tr><td align="left">ЗАЧЕМ: статистический сигнал поверх правил;<br/>обучается на корпусе SQLi</td></tr></table>>];
+                <tr><td align="left">@brief sql → P(malicious/safe)</td></tr>
+                <tr><td align="left">ЗАЧЕМ: ловит что правила пропускают</td></tr>
+                <tr><td bgcolor="#ECEFF1">⬜ план (бонус, нужен fine-tune)</td></tr></table>>];
         }
         subgraph cluster_p2 {
-            label="Phase 2 — LLM-триаж + RAG: контекст, объяснения, FP-фильтр";
+            label="Phase 2 — LLM-триаж + RAG";
             labeljust="l"; fontsize=11; style="rounded,filled"; color="#43A047"; fillcolor="#F1F8E9";
             rag [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
                 <tr><td><b>RAG retrieval (BM25 + dense)</b></td></tr>
-                <tr><td align="left">@brief поиск по базе CWE / CAPEC / OWASP</td></tr>
-                <tr><td align="left">ЗАЧЕМ: дать судье знания + верифицируемые ссылки</td></tr></table>>];
+                <tr><td align="left">@brief поиск CWE / CAPEC / OWASP</td></tr>
+                <tr><td align="left">ЗАЧЕМ: знания + верифицируемые ссылки</td></tr>
+                <tr><td bgcolor="#ECEFF1">⬜ план (нужен vector store)</td></tr></table>>];
             judge_llm [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
                 <tr><td><b>LLM судья · Qwen2.5-7B</b></td></tr>
-                <tr><td align="left">@brief триаж findings + объяснение на русском</td></tr>
-                <tr><td align="left">ЗАЧЕМ: отсеять ложные срабатывания,<br/>дать рекомендацию (прозрачность для аналитика)</td></tr></table>>];
+                <tr><td align="left">@brief триаж findings + объяснение</td></tr>
+                <tr><td align="left">ЗАЧЕМ: отсеять FP, дать рекомендацию</td></tr>
+                <tr><td bgcolor="#FF8A65"><b>🟧 МОК · MockLLMClient._mock_judge</b></td></tr></table>>];
             rag -> judge_llm;
         }
         aggregate [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>агрегатор вердикта</b></td></tr>
-            <tr><td align="left">@brief risk = MAX по находкам; approved = risk &lt; 4.0</td></tr>
-            <tr><td align="left">ЗАЧЕМ: одна критичная не размывается мелкими</td></tr></table>>];
+            <tr><td align="left">@brief risk = MAX; approved = risk &lt; 4.0</td></tr>
+            <tr><td bgcolor="#A5D6A7">✅ готово · HybridAuditor.audit</td></tr></table>>];
 
         rules -> aggregate; sensitive -> aggregate; explain -> aggregate;
         codebert -> aggregate; judge_llm -> aggregate;
@@ -148,12 +164,13 @@ digraph Target {
         style="rounded,filled"; color="#2E7D32"; fillcolor="#E8F5E9";
         refl_model [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
             <tr><td><b>reflector · Qwen-7B / FLAN-T5</b></td></tr>
-            <tr><td align="left">@brief findings судьи → короткий «урок»</td></tr>
-            <tr><td align="left">ЗАЧЕМ: ответ на гл. вопрос ТЗ —<br/>генератор не повторяет ошибку</td></tr></table>>];
+            <tr><td align="left">@brief findings судьи → «урок»</td></tr>
+            <tr><td align="left">ЗАЧЕМ: генератор не повторяет ошибку</td></tr>
+            <tr><td bgcolor="#FFE082">⚠️ упрощено · детерминир. lookup, не LLM</td></tr></table>>];
         refl_dedup [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>дедуп + окно 5 уроков</b></td></tr>
             <tr><td align="left">@brief память последних уроков</td></tr>
-            <tr><td align="left">ЗАЧЕМ: не зашумлять промпт устаревшим</td></tr></table>>];
+            <tr><td bgcolor="#A5D6A7">✅ готово · nodes/reflector.py</td></tr></table>>];
         refl_model -> refl_dedup;
     }
 
@@ -164,15 +181,16 @@ digraph Target {
         style="rounded,filled"; color="#1E88E5"; fillcolor="#E3F2FD";
         cycle [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>LangGraph цикл</b></td></tr>
-            <tr><td align="left">@brief gen → audit → reflect, до 5 итераций</td></tr>
-            <tr><td align="left">ЗАЧЕМ: связать узлы, вести лог итераций</td></tr></table>>];
+            <tr><td align="left">@brief gen → audit → reflect, до 5 итер.</td></tr>
+            <tr><td bgcolor="#FFE082">⚠️ упрощено · Python-цикл, не LangGraph</td></tr></table>>];
         decide [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFF9C4">
             <tr><td><b>approved?</b></td></tr>
-            <tr><td align="left">@brief risk &lt; 4.0 ?</td></tr></table>>];
+            <tr><td align="left">@brief risk &lt; 4.0 ?</td></tr>
+            <tr><td bgcolor="#A5D6A7">✅ готово</td></tr></table>>];
         persist [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
             <tr><td><b>PostgresSaver</b></td></tr>
-            <tr><td align="left">@brief checkpoints состояния</td></tr>
-            <tr><td align="left">ЗАЧЕМ: возобновление, time-travel, прозрачный лог</td></tr></table>>];
+            <tr><td align="left">@brief checkpoints, time-travel</td></tr>
+            <tr><td bgcolor="#ECEFF1">⬜ план</td></tr></table>>];
         cycle -> decide;
     }
 
@@ -183,16 +201,16 @@ digraph Target {
         style="rounded,filled"; color="#607D8B"; fillcolor="#FAFAFA";
         sandbox [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
             <tr><td><b>Postgres sandbox</b></td></tr>
-            <tr><td align="left">@brief EXPLAIN, faker-данные, state</td></tr>
-            <tr><td align="left">ЗАЧЕМ: проверять SQL без боевой БД</td></tr></table>>];
+            <tr><td align="left">@brief EXPLAIN, faker, state</td></tr>
+            <tr><td bgcolor="#ECEFF1">⬜ план (есть overlay-SQL)</td></tr></table>>];
         vstore [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
             <tr><td><b>Vector store</b></td></tr>
-            <tr><td align="left">@brief RAG (CWE/CAPEC) + эмбеддинги схемы</td></tr>
-            <tr><td align="left">ЗАЧЕМ: семантический поиск знаний и таблиц</td></tr></table>>];
+            <tr><td align="left">@brief RAG + эмбеддинги схемы</td></tr>
+            <tr><td bgcolor="#ECEFF1">⬜ план</td></tr></table>>];
         langfuse [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
             <tr><td><b>Langfuse</b></td></tr>
             <tr><td align="left">@brief трейсы, scoring, A/B</td></tr>
-            <tr><td align="left">ЗАЧЕМ: наблюдаемость + аналитика (15 баллов)</td></tr></table>>];
+            <tr><td bgcolor="#ECEFF1">⬜ план</td></tr></table>>];
     }
 
     // ═══════════ ПОТОК между компонентами ═══════════
@@ -211,14 +229,21 @@ digraph Target {
     cycle -> langfuse [style=dotted, color="#BDBDBD", label="трейс"];
     cycle -> persist [style=dotted];
 
-    // ═══════════ Легенда ═══════════
-    subgraph cluster_leg {
-        label="Легенда (природа узла)"; labeljust="l"; fontsize=12;
-        style="rounded"; color="#BDBDBD";
-        leg [label=<<table border="0" cellborder="1" cellspacing="0">
+    // ═══════════ Легенды ═══════════
+    subgraph cluster_leg1 {
+        label="Природа узла"; labeljust="l"; fontsize=12; style="rounded"; color="#BDBDBD";
+        leg1 [label=<<table border="0" cellborder="1" cellspacing="0">
             <tr><td bgcolor="#CE93D8">парсер (текст → структура/AST)</td></tr>
             <tr><td bgcolor="#90CAF9">алгоритм (детерминированный)</td></tr>
             <tr><td bgcolor="#FFB74D">модель (ML / LLM)</td></tr>
             <tr><td bgcolor="#B0BEC5">данные / хранилище</td></tr></table>>];
+    }
+    subgraph cluster_leg2 {
+        label="Статус реализации"; labeljust="l"; fontsize=12; style="rounded"; color="#BDBDBD";
+        leg2 [label=<<table border="0" cellborder="1" cellspacing="0">
+            <tr><td bgcolor="#A5D6A7">✅ готово (работает в MVP)</td></tr>
+            <tr><td bgcolor="#FF8A65"><b>🟧 МОК (заглушка → реальный LLM)</b></td></tr>
+            <tr><td bgcolor="#FFE082">⚠️ упрощено (работает, но не целевое)</td></tr>
+            <tr><td bgcolor="#ECEFF1">⬜ план (ещё не реализовано)</td></tr></table>>];
     }
 }
