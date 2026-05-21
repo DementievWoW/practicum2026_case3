@@ -1,0 +1,238 @@
+// Детальный call-graph по функциям (Doxygen-аннотации в узлах).
+// Рендер: dot -Tpng docs/callgraph.dot -o docs/callgraph.png
+// Цвет узла: зелёный=реальный код, оранжевый=мок, голубой=оркестратор,
+//            серый=данные/контракты, жёлтый=ветвление.
+digraph CallGraph {
+    rankdir=LR;
+    fontname="Helvetica";
+    bgcolor="white";
+    nodesep=0.3; ranksep=0.9;
+    node [shape=plaintext, fontname="Helvetica"];
+    edge [fontname="Helvetica", fontsize=9, color="#555555"];
+
+    // ─────────── helper-макрос узла через HTML (имитируем) ───────────
+    // Узлы определяем вручную HTML-таблицами: заголовок = сигнатура,
+    // строки = @brief / @param / @return.
+
+    // ════════════════ RUNTIME: run_pipeline ════════════════
+    subgraph cluster_runtime {
+        label="RUNTIME — прогон одного запроса (run_pipeline)";
+        labeljust="l"; fontsize=15; fontname="Helvetica-Bold";
+        style="rounded"; color="#1E88E5"; bgcolor="#F5F9FF";
+
+        // ---- pipeline.py ----
+        run_pipeline [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#BBDEFB">
+            <tr><td><b>run_pipeline(task, llm=None, ...)</b></td></tr>
+            <tr><td align="left">@brief entrypoint: собирает узлы (моки по умолч.)</td></tr>
+            <tr><td align="left">@param task NL-описание задачи</td></tr>
+            <tr><td align="left">@return SystemResult</td></tr>
+            <tr><td align="left"><i>src/case3/pipeline.py</i></td></tr>
+          </table>>];
+
+        pipe_run [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#BBDEFB">
+            <tr><td><b>SQLSecurityPipeline.run(task)</b></td></tr>
+            <tr><td align="left">@brief цикл генератор→судья→reflector</td></tr>
+            <tr><td align="left">@details до max_iterations=5; копит reflection</td></tr>
+            <tr><td align="left">@return SystemResult (+ risk_trajectory)</td></tr>
+          </table>>];
+
+        render_log [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#C8E6C9">
+            <tr><td><b>_render_log(iterations_log)</b></td></tr>
+            <tr><td align="left">@brief человекочитаемый аудит-лог</td></tr>
+            <tr><td align="left">@return str</td></tr>
+          </table>>];
+
+        // ---- generator.py ----
+        gen_generate [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#C8E6C9">
+            <tr><td><b>LLMGenerator.generate(task, reflection, ...)</b></td></tr>
+            <tr><td align="left">@brief строит промпт и зовёт LLM</td></tr>
+            <tr><td align="left">@param reflection list[Lesson] (in-context)</td></tr>
+            <tr><td align="left">@return SQL-строка</td></tr>
+          </table>>];
+
+        gen_sysprompt [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#C8E6C9">
+            <tr><td><b>_system_prompt(reflection)</b></td></tr>
+            <tr><td align="left">@brief вшивает уроки в system-промпт</td></tr>
+            <tr><td align="left">@return str</td></tr>
+          </table>>];
+
+        // ---- llm/mock.py ----
+        mock_chat [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#FFE0B2">
+            <tr><td><b>MockLLMClient.chat(messages, ...)</b></td></tr>
+            <tr><td align="left">@brief роутит по роли (судья/генератор)</td></tr>
+            <tr><td align="left">@return ChatResponse</td></tr>
+          </table>>];
+        mock_gen [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#FFE0B2">
+            <tr><td><b>_mock_generator(prompt)</b></td></tr>
+            <tr><td align="left">@brief есть уроки → чистый SQL, иначе уязвимый</td></tr>
+          </table>>];
+        mock_judge [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#FFE0B2">
+            <tr><td><b>_mock_judge(prompt)</b></td></tr>
+            <tr><td align="left">@brief текст рекомендации (Phase 2)</td></tr>
+          </table>>];
+
+        // ---- auditor.py ----
+        aud_audit [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#C8E6C9">
+            <tr><td><b>HybridAuditor.audit(sql)</b></td></tr>
+            <tr><td align="left">@brief Phase1 правила + Phase2 LLM-триаж</td></tr>
+            <tr><td align="left">@details overall_risk=MAX; approved=risk&lt;4.0</td></tr>
+            <tr><td align="left">@return AuditResult</td></tr>
+          </table>>];
+        aud_phase1 [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#C8E6C9">
+            <tr><td><b>run_phase1(sql) → list[Finding]</b></td></tr>
+            <tr><td align="left">@brief прогон всех детерминированных правил</td></tr>
+          </table>>];
+
+        // правила (компактно, но по-функционально)
+        rules [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#C8E6C9">
+            <tr><td><b>Phase 1 правила (regex)</b></td></tr>
+            <tr><td align="left">_rule_select_star → R001</td></tr>
+            <tr><td align="left">_rule_dml_no_where → R002/R003</td></tr>
+            <tr><td align="left">_rule_no_limit → R004</td></tr>
+            <tr><td align="left">_rule_union → R005</td></tr>
+            <tr><td align="left">_rule_pg_sleep → R006</td></tr>
+            <tr><td align="left">_rule_security_definer → R007</td></tr>
+            <tr><td align="left">_rule_plpgsql_concat → R012/R013</td></tr>
+            <tr><td align="left">_rule_injection_marker → R011</td></tr>
+            <tr><td align="left">_rule_sensitive_columns → R009</td></tr>
+          </table>>];
+
+        // ---- contracts.py ----
+        finding_tovuln [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#CFD8DC">
+            <tr><td><b>Finding.to_vulnerability(rec)</b></td></tr>
+            <tr><td align="left">@brief маппинг во внешний контракт</td></tr>
+            <tr><td align="left">@return baseline.Vulnerability</td></tr>
+          </table>>];
+
+        // ---- reflector.py ----
+        refl_reflect [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#C8E6C9">
+            <tr><td><b>Reflector.reflect(audit, prev)</b></td></tr>
+            <tr><td align="left">@brief findings → Lesson (lookup), дедуп+окно</td></tr>
+            <tr><td align="left">@return list[Lesson]</td></tr>
+          </table>>];
+
+        // ---- audit/sensitive.py ----
+        detect_col [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#C8E6C9">
+            <tr><td><b>detect_column(name)</b></td></tr>
+            <tr><td align="left">@brief regex + явный список → SensitiveHit?</td></tr>
+          </table>>];
+        detect_pii [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#C8E6C9">
+            <tr><td><b>detect_pii_in_literals(sql)</b></td></tr>
+            <tr><td align="left">@brief PII в значениях (карты/СНИЛС)</td></tr>
+          </table>>];
+        luhn [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#C8E6C9">
+            <tr><td><b>luhn_valid / snils_valid</b></td></tr>
+            <tr><td align="left">@brief контрольные суммы PII</td></tr>
+          </table>>];
+
+        // ── рёбра runtime ──
+        run_pipeline -> pipe_run [label="run()"];
+        pipe_run -> gen_generate [label="1. iter N"];
+        gen_generate -> gen_sysprompt;
+        gen_generate -> mock_chat [label="llm.chat"];
+        mock_chat -> mock_gen;
+        pipe_run -> aud_audit [label="2. audit(sql)"];
+        aud_audit -> aud_phase1;
+        aud_phase1 -> rules;
+        rules -> detect_col [label="R009"];
+        rules -> detect_pii [label="R009b"];
+        detect_pii -> luhn;
+        aud_audit -> mock_chat [label="Phase2 llm.chat"];
+        mock_chat -> mock_judge;
+        aud_audit -> finding_tovuln [label="→ Vulnerability"];
+        pipe_run -> refl_reflect [label="3. если не approved"];
+        refl_reflect -> gen_generate [label="reflection (loop)", style=dashed, color="#8E24AA", fontcolor="#8E24AA", constraint=false];
+        pipe_run -> render_log [label="4. finalize"];
+    }
+
+    // ════════════════ OFFLINE: подготовка артефактов ════════════════
+    subgraph cluster_offline {
+        label="OFFLINE — подготовка артефактов (один раз)";
+        labeljust="l"; fontsize=15; fontname="Helvetica-Bold";
+        style="rounded"; color="#607D8B"; bgcolor="#FAFAFA";
+
+        // schema
+        parse_file [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#C8E6C9">
+            <tr><td><b>parse_file(path) / parse_ddl(text)</b></td></tr>
+            <tr><td align="left">@brief дамп DDL → SchemaCatalog</td></tr>
+            <tr><td align="left"><i>schema/parser.py</i></td></tr>
+          </table>>];
+        parse_cols [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#C8E6C9">
+            <tr><td><b>_parse_columns / _clean_*_comment</b></td></tr>
+            <tr><td align="left">@brief колонки + чистка SysObjType/langSchema</td></tr>
+          </table>>];
+        catalog [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#CFD8DC">
+            <tr><td><b>SchemaCatalog</b></td></tr>
+            <tr><td align="left">to_ddl() — DDL в промпт</td></tr>
+            <tr><td align="left">to_card() — текст для эмбеддинга</td></tr>
+            <tr><td align="left">fk_closure() — замыкание по FK</td></tr>
+            <tr><td align="left"><i>schema/models.py</i></td></tr>
+          </table>>];
+
+        // dataset
+        build_records [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#C8E6C9">
+            <tr><td><b>build_records() / split_records()</b></td></tr>
+            <tr><td align="left">@brief SEED → DatasetRecord, стратиф. split</td></tr>
+            <tr><td align="left"><i>dataset/build_dataset.py</i></td></tr>
+          </table>>];
+        back_translate [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#FFE0B2">
+            <tr><td><b>mock_back_translate(intent, sql)</b></td></tr>
+            <tr><td align="left">@brief SQL→NL (мок; в проде LLM)</td></tr>
+          </table>>];
+        seed [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#CFD8DC">
+            <tr><td><b>SEED: list[SeedExample]</b></td></tr>
+            <tr><td align="left">14 примеров на схеме заказчика</td></tr>
+            <tr><td align="left"><i>dataset/seed_examples.py</i></td></tr>
+          </table>>];
+
+        // features (опц.)
+        feats [label=<
+          <table border="0" cellborder="1" cellspacing="0" bgcolor="#C8E6C9">
+            <tr><td><b>extract_features(sql) → SqlFeatures</b></td></tr>
+            <tr><td align="left">@brief 18 структурных признаков SQL</td></tr>
+            <tr><td align="left">@details для риск-скоринга/аналитики (ADR-0011)</td></tr>
+            <tr><td align="left"><i>features/sql_features.py</i></td></tr>
+          </table>>];
+
+        parse_file -> parse_cols;
+        parse_file -> catalog [label="→"];
+        build_records -> back_translate;
+        build_records -> seed [label="читает"];
+        feats -> detect_col [label="reuse R009", style=dotted, constraint=false];
+    }
+
+    // ── легенда ──
+    subgraph cluster_leg {
+        label="Легенда"; labeljust="l"; fontsize=12;
+        style="rounded"; color="#BDBDBD"; bgcolor="white";
+        leg [label=<
+          <table border="0" cellborder="1" cellspacing="0">
+            <tr><td bgcolor="#C8E6C9">РЕАЛЬНЫЙ код (работает)</td></tr>
+            <tr><td bgcolor="#FFE0B2">МОК (заменится на LLM)</td></tr>
+            <tr><td bgcolor="#BBDEFB">оркестратор / entrypoint</td></tr>
+            <tr><td bgcolor="#CFD8DC">данные / контракты</td></tr>
+          </table>>];
+    }
+}
