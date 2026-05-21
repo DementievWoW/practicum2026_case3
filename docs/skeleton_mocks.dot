@@ -1,6 +1,5 @@
-// КАРТА ЗАГЛУШЕК — что мокаем для walking skeleton, кто пишет реальное.
-// Тимлид собирает скелет на заглушках; команда подменяет их реализациями.
-// Статус: КРАСНЫЙ=мок LLM · ГОЛУБОЙ=заглушка (пишет роль) · ЗЕЛЁНЫЙ=делает тимлид.
+// КАРТА СОСТОЯНИЯ КОДА — где заглушки (с файлами), каркас, что не написано.
+// 🟢 реальный каркас (тимлид) · 🟧 ЗАГЛУШКА/МОК в коде (файл) · ⬜ не написано (роль).
 // Рендер: dot -Tpng docs/skeleton_mocks.dot -o docs/skeleton_mocks.png
 digraph Skeleton {
     rankdir=TB;
@@ -15,7 +14,7 @@ digraph Skeleton {
         <tr><td><b>task (NL)</b></td></tr></table>>];
     result [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#ECEFF1">
         <tr><td><b>SystemResult</b></td></tr>
-        <tr><td bgcolor="#A5D6A7">🟢 тимлид (контракт baseline)</td></tr></table>>];
+        <tr><td bgcolor="#A5D6A7">🟢 каркас · contracts.py</td></tr></table>>];
 
     // ═══════════ Schema layer ═══════════
     subgraph cluster_schema {
@@ -25,19 +24,20 @@ digraph Skeleton {
 
         ddl_parser [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#CE93D8">
             <tr><td><b>DDL-парсер</b></td></tr>
-            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Данные</td></tr></table>>];
+            <tr><td bgcolor="#FFCC80"><b>🟧 ЗАГЛУШКА · schema/parser.py</b></td></tr>
+            <tr><td bgcolor="#ECEFF1">реальный пишет: Данные</td></tr></table>>];
         catalog [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
-            <tr><td><b>schema_catalog</b></td></tr>
-            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Данные</td></tr></table>>];
+            <tr><td><b>schema_catalog (структура)</b></td></tr>
+            <tr><td bgcolor="#A5D6A7">🟢 контракт · schema/models.py</td></tr></table>>];
         card [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
-            <tr><td><b>карточки таблиц to_card()</b></td></tr>
-            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Данные</td></tr></table>>];
+            <tr><td><b>карточки to_card()</b></td></tr>
+            <tr><td bgcolor="#A5D6A7">🟢 реальный · models.py</td></tr></table>>];
         sch_embed [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
             <tr><td><b>эмбеддинг карточек (e5)</b></td></tr>
-            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Данные</td></tr></table>>];
+            <tr><td bgcolor="#ECEFF1">⬜ не написано → Данные</td></tr></table>>];
         faiss_idx [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
             <tr><td><b>FAISS index</b></td></tr>
-            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Данные</td></tr></table>>];
+            <tr><td bgcolor="#ECEFF1">⬜ не написано → Данные</td></tr></table>>];
 
         ddl_parser -> catalog -> card -> sch_embed -> faiss_idx;
     }
@@ -50,19 +50,20 @@ digraph Skeleton {
 
         g_search [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>schema linking (FAISS top-15)</b></td></tr>
-            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: LLM-инженер</td></tr></table>>];
+            <tr><td bgcolor="#ECEFF1">⬜ не написано → LLM-инженер</td></tr></table>>];
         g_fk [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>FK-замыкание</b></td></tr>
-            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Данные</td></tr></table>>];
+            <tr><td bgcolor="#A5D6A7">🟢 реальный · models.fk_closure()</td></tr></table>>];
         g_fewshot [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>few-shot retrieval</b></td></tr>
-            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: LLM-инженер</td></tr></table>>];
+            <tr><td bgcolor="#ECEFF1">⬜ не написано → LLM-инженер</td></tr></table>>];
         g_prompt [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>сборка промпта</b></td></tr>
-            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: LLM-инженер</td></tr></table>>];
+            <tr><td bgcolor="#A5D6A7">🟢 каркас · nodes/generator.py</td></tr></table>>];
         g_llm [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
             <tr><td><b>LLM генератор · Qwen-32B</b></td></tr>
-            <tr><td bgcolor="#FF8A65"><b>🟧 МОК · MockLLMClient → LLM-инженер</b></td></tr></table>>];
+            <tr><td bgcolor="#FF8A65"><b>🟧 МОК · llm/mock.py</b></td></tr>
+            <tr><td bgcolor="#ECEFF1">реальный LLM: LLM-инженер</td></tr></table>>];
 
         g_search -> g_fk -> g_prompt -> g_llm;
         g_fewshot -> g_prompt;
@@ -79,16 +80,18 @@ digraph Skeleton {
             labeljust="l"; fontsize=11; style="rounded,filled"; color="#43A047"; fillcolor="#F1F8E9";
             sql_parser [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#CE93D8">
                 <tr><td><b>SQL-парсер pglast</b></td></tr>
-                <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Тулзы</td></tr></table>>];
+                <tr><td bgcolor="#ECEFF1">⬜ не написано (пока regex) → Тулзы</td></tr></table>>];
             rules [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
                 <tr><td><b>правила R001-R013</b></td></tr>
-                <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Тулзы</td></tr></table>>];
+                <tr><td bgcolor="#FFCC80"><b>🟧 ЗАГЛУШКИ · nodes/auditor.py</b></td></tr>
+                <tr><td bgcolor="#ECEFF1">2 рабочие + 7 TODO → Тулзы</td></tr></table>>];
             sensitive [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
                 <tr><td><b>детектор sensitive R009</b></td></tr>
-                <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Тулзы</td></tr></table>>];
+                <tr><td bgcolor="#FFCC80"><b>🟧 ЗАГЛУШКА · audit/sensitive.py</b></td></tr>
+                <tr><td bgcolor="#ECEFF1">мини-словарь → Тулзы</td></tr></table>>];
             explain [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
                 <tr><td><b>EXPLAIN-анализ</b></td></tr>
-                <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Тулзы</td></tr></table>>];
+                <tr><td bgcolor="#ECEFF1">⬜ не написано → Тулзы</td></tr></table>>];
             sql_parser -> rules;
         }
         subgraph cluster_p15 {
@@ -96,22 +99,23 @@ digraph Skeleton {
             labeljust="l"; fontsize=11; style="rounded,filled"; color="#43A047"; fillcolor="#F1F8E9";
             codebert [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
                 <tr><td><b>CodeBERT classifier</b></td></tr>
-                <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Тулзы (бонус)</td></tr></table>>];
+                <tr><td bgcolor="#ECEFF1">⬜ не написано (бонус) → Тулзы</td></tr></table>>];
         }
         subgraph cluster_p2 {
             label="Phase 2 — LLM + RAG";
             labeljust="l"; fontsize=11; style="rounded,filled"; color="#43A047"; fillcolor="#F1F8E9";
             rag [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
                 <tr><td><b>RAG retrieval</b></td></tr>
-                <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Тулзы</td></tr></table>>];
+                <tr><td bgcolor="#ECEFF1">⬜ не написано → Тулзы</td></tr></table>>];
             judge_llm [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
                 <tr><td><b>LLM судья · Qwen-7B</b></td></tr>
-                <tr><td bgcolor="#FF8A65"><b>🟧 МОК · MockLLMClient → LLM-инженер</b></td></tr></table>>];
+                <tr><td bgcolor="#FF8A65"><b>🟧 МОК · llm/mock.py</b></td></tr>
+                <tr><td bgcolor="#ECEFF1">реальный LLM: LLM-инженер</td></tr></table>>];
             rag -> judge_llm;
         }
         aggregate [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>агрегатор вердикта</b></td></tr>
-            <tr><td bgcolor="#A5D6A7">🟢 тимлид (склейка findings)</td></tr></table>>];
+            <tr><td bgcolor="#A5D6A7">🟢 каркас · nodes/auditor.py</td></tr></table>>];
 
         rules -> aggregate; sensitive -> aggregate; explain -> aggregate;
         codebert -> aggregate; judge_llm -> aggregate;
@@ -124,30 +128,31 @@ digraph Skeleton {
         style="rounded,filled"; color="#2E7D32"; fillcolor="#E8F5E9";
         refl_model [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
             <tr><td><b>reflector · Qwen-7B / FLAN-T5</b></td></tr>
-            <tr><td bgcolor="#FF8A65"><b>🟧 МОК · детермин. заглушка → LLM-инженер</b></td></tr></table>>];
+            <tr><td bgcolor="#FFCC80"><b>🟧 ЗАГЛУШКА · nodes/reflector.py</b></td></tr>
+            <tr><td bgcolor="#ECEFF1">детермин. lookup; реальный → LLM-инженер</td></tr></table>>];
         refl_dedup [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>дедуп + окно 5</b></td></tr>
-            <tr><td bgcolor="#A5D6A7">🟢 тимлид</td></tr></table>>];
+            <tr><td bgcolor="#A5D6A7">🟢 реальный · nodes/reflector.py</td></tr></table>>];
         refl_model -> refl_dedup;
     }
 
     // ═══════════ Оркестратор (зона тимлида) ═══════════
     subgraph cluster_orch {
-        label="Оркестратор  —  СОБИРАЕТ ТИМЛИД";
+        label="Оркестратор  —  КАРКАС ТИМЛИДА (реальный)";
         labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
         style="rounded,filled"; color="#1E88E5"; fillcolor="#E8F5E9";
         cycle [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>цикл gen→audit→reflect</b></td></tr>
-            <tr><td bgcolor="#A5D6A7">🟢 тимлид (pipeline.py)</td></tr></table>>];
+            <tr><td bgcolor="#A5D6A7">🟢 реальный · pipeline.py</td></tr></table>>];
         decide [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFF9C4">
             <tr><td><b>approved? (risk &lt; 4.0)</b></td></tr>
-            <tr><td bgcolor="#A5D6A7">🟢 тимлид</td></tr></table>>];
+            <tr><td bgcolor="#A5D6A7">🟢 реальный · pipeline.py</td></tr></table>>];
         contracts [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
-            <tr><td><b>контракты (Finding, Lesson, LLMClient)</b></td></tr>
-            <tr><td bgcolor="#A5D6A7">🟢 тимлид (зафиксированы)</td></tr></table>>];
+            <tr><td><b>контракты (Finding/Lesson/LLMClient)</b></td></tr>
+            <tr><td bgcolor="#A5D6A7">🟢 реальный · contracts.py, llm/client.py</td></tr></table>>];
         persist [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
             <tr><td><b>PostgresSaver</b></td></tr>
-            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Аналитик/DevOps</td></tr></table>>];
+            <tr><td bgcolor="#ECEFF1">⬜ не написано → Аналитик</td></tr></table>>];
         cycle -> decide;
     }
 
@@ -158,13 +163,13 @@ digraph Skeleton {
         style="rounded,filled"; color="#607D8B"; fillcolor="#FAFAFA";
         sandbox [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
             <tr><td><b>Postgres sandbox</b></td></tr>
-            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Данные/DevOps</td></tr></table>>];
+            <tr><td bgcolor="#ECEFF1">⬜ не написано (есть overlay.sql) → Данные</td></tr></table>>];
         vstore [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
             <tr><td><b>Vector store</b></td></tr>
-            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Тулзы</td></tr></table>>];
+            <tr><td bgcolor="#ECEFF1">⬜ не написано → Тулзы</td></tr></table>>];
         langfuse [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
             <tr><td><b>Langfuse</b></td></tr>
-            <tr><td bgcolor="#B3E5FC">🔵 заглушка → роль: Аналитик</td></tr></table>>];
+            <tr><td bgcolor="#ECEFF1">⬜ не написано → Аналитик</td></tr></table>>];
     }
 
     // ═══════════ ПОТОК ═══════════
@@ -182,10 +187,11 @@ digraph Skeleton {
 
     // ═══════════ Легенда ═══════════
     subgraph cluster_leg {
-        label="Кто что делает"; labeljust="l"; fontsize=12; style="rounded"; color="#BDBDBD";
+        label="Состояние кода"; labeljust="l"; fontsize=12; style="rounded"; color="#BDBDBD";
         leg [label=<<table border="0" cellborder="1" cellspacing="0">
-            <tr><td bgcolor="#A5D6A7">🟢 тимлид — собирает скелет (оркестратор, контракты, заглушки)</td></tr>
-            <tr><td bgcolor="#FF8A65">🟧 МОК LLM — MockLLMClient (потом реальный LLM)</td></tr>
-            <tr><td bgcolor="#B3E5FC">🔵 заглушка — пишет член команды (роль указана)</td></tr></table>>];
+            <tr><td bgcolor="#A5D6A7">🟢 реальный каркас (тимлид) — работает, файл указан</td></tr>
+            <tr><td bgcolor="#FFCC80">🟧 ЗАГЛУШКА в коде — есть файл, реализует роль</td></tr>
+            <tr><td bgcolor="#FF8A65">🟧 МОК LLM — llm/mock.py (потом реальный LLM)</td></tr>
+            <tr><td bgcolor="#ECEFF1">⬜ не написано — ещё нет даже заглушки (роль указана)</td></tr></table>>];
     }
 }
