@@ -1,89 +1,141 @@
 // ЦЕЛЕВАЯ архитектура «как будет работать» — по компонентам-зонам.
-// Каждый компонент = слабо закрашенное поле; внутри — алгоритмы, модели, парсеры.
+// В каждом узле: название · @brief (что делает) · ЗАЧЕМ (польза).
+// Цвет узла: фиолетовый=парсер, голубой=алгоритм, оранжевый=модель, серый=данные.
 // Рендер: dot -Tpng docs/target_components.dot -o docs/target_components.png
 digraph Target {
     rankdir=TB;
     compound=true;
     fontname="Helvetica";
     bgcolor="white";
-    nodesep=0.35; ranksep=0.6;
-    node [fontname="Helvetica", fontsize=10, style="filled", penwidth=1.2];
+    nodesep=0.35; ranksep=0.65;
+    node [shape=plaintext, fontname="Helvetica"];
     edge [fontname="Helvetica", fontsize=9, color="#555555"];
 
-    // Типы узлов (цвет = природа):
-    //   парсер   = shape=component, фиолетовый #CE93D8
-    //   алгоритм = shape=box,       голубой    #90CAF9
-    //   модель   = shape=box,       оранжевый  #FFB74D
-    //   данные   = shape=cylinder,  серый      #B0BEC5
-
-    task   [label="task (NL)\n«покажи договоры\nс просрочкой»", shape=ellipse, fillcolor="#ECEFF1"];
-    result [label="SystemResult\nfinal_sql + audit_log\n+ risk_trajectory", shape=ellipse, fillcolor="#C8E6C9"];
+    task   [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#ECEFF1">
+        <tr><td><b>task (NL)</b></td></tr>
+        <tr><td align="left">«покажи договоры с просрочкой»</td></tr></table>>];
+    result [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#C8E6C9">
+        <tr><td><b>SystemResult</b></td></tr>
+        <tr><td align="left">final_sql + audit_log + risk_trajectory</td></tr>
+        <tr><td align="left"><i>что отдаём пользователю/платформе</i></td></tr></table>>];
 
     // ═══════════ КОМПОНЕНТ: Schema layer ═══════════
     subgraph cluster_schema {
-        label="КОМПОНЕНТ: Schema layer  (подготовка схемы)";
+        label="КОМПОНЕНТ: Schema layer  —  превращаем сырой DDL в поисковый индекс";
         labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
         style="rounded,filled"; color="#1E88E5"; fillcolor="#E3F2FD";
 
-        ddl_parser [label="DDL-парсер\n(regex / pglast)\ndata_model.sql → catalog", shape=component, fillcolor="#CE93D8"];
-        catalog    [label="SchemaCatalog\n60 таблиц, FK, comments", shape=cylinder, fillcolor="#B0BEC5"];
-        sch_embed  [label="эмбеддинг таблиц\n(multilingual-e5)", fillcolor="#FFB74D"];
-        faiss_idx  [label="FAISS index\n(карточки таблиц)", shape=cylinder, fillcolor="#B0BEC5"];
+        ddl_parser [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#CE93D8">
+            <tr><td><b>DDL-парсер (regex/pglast)</b></td></tr>
+            <tr><td align="left">@brief data_model.sql → структура</td></tr>
+            <tr><td align="left">ЗАЧЕМ: 657 KB сырого SQL неудобны;<br/>достаём таблицы, колонки, FK, комментарии</td></tr></table>>];
+        catalog [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
+            <tr><td><b>schema_catalog (60 таблиц)</b></td></tr>
+            <tr><td align="left">@brief каталог: credit_contract, acc_number...</td></tr>
+            <tr><td align="left">ЗАЧЕМ: единый источник схемы для<br/>генератора и аудитора (сверка имён)</td></tr></table>>];
+        card [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>карточки таблиц — to_card()</b></td></tr>
+            <tr><td align="left">@brief таблица → текст «имя + коммент + колонки»</td></tr>
+            <tr><td align="left">ЗАЧЕМ: эмбеддить надо осмысленный ТЕКСТ,<br/>а не сырую структуру</td></tr></table>>];
+        sch_embed [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
+            <tr><td><b>эмбеддинг карточек (multilingual-e5)</b></td></tr>
+            <tr><td align="left">@brief карточка → вектор (1024 числа)</td></tr>
+            <tr><td align="left">ЗАЧЕМ: похожие по смыслу → близкие векторы;<br/>так ищем таблицы по смыслу вопроса</td></tr></table>>];
+        faiss_idx [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
+            <tr><td><b>FAISS index</b></td></tr>
+            <tr><td align="left">@brief индекс векторов всех 60 таблиц</td></tr>
+            <tr><td align="left">ЗАЧЕМ: мгновенный поиск top-K ближайших</td></tr></table>>];
 
-        ddl_parser -> catalog -> sch_embed -> faiss_idx;
+        ddl_parser -> catalog -> card -> sch_embed -> faiss_idx;
     }
 
     // ═══════════ КОМПОНЕНТ: Генератор ═══════════
     subgraph cluster_gen {
-        label="КОМПОНЕНТ: Генератор SQL";
+        label="КОМПОНЕНТ: Генератор SQL  —  NL → SQL по релевантной схеме";
         labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
         style="rounded,filled"; color="#FB8C00"; fillcolor="#FFF3E0";
 
-        g_qembed  [label="эмбеддинг вопроса\n(multilingual-e5)", fillcolor="#FFB74D"];
-        g_search  [label="schema linking\nFAISS top-15", fillcolor="#90CAF9"];
-        g_fk      [label="FK-замыкание\n(+ справочники)", fillcolor="#90CAF9"];
-        g_fewshot [label="few-shot retrieval\n(по similarity)", fillcolor="#90CAF9"];
-        g_prompt  [label="сборка промпта\nDDL + few-shot + reflection", fillcolor="#90CAF9"];
-        g_llm     [label="LLM генератор\nQwen2.5-Coder-32B", fillcolor="#FFB74D"];
-        g_tools   [label="tools: get_schema,\nget_sample_rows", shape=note, fillcolor="#FFF9C4"];
+        g_qembed [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
+            <tr><td><b>эмбеддинг вопроса (e5)</b></td></tr>
+            <tr><td align="left">@brief NL-вопрос → вектор</td></tr>
+            <tr><td align="left">ЗАЧЕМ: сравнить с карточками таблиц</td></tr></table>>];
+        g_search [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>schema linking — FAISS top-15</b></td></tr>
+            <tr><td align="left">@brief выбрать релевантные таблицы из 60</td></tr>
+            <tr><td align="left">ЗАЧЕМ: все 60 в промпт не влезут;<br/>без линкинга модель галлюцинирует имена</td></tr></table>>];
+        g_fk [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>FK-замыкание</b></td></tr>
+            <tr><td align="left">@brief добавить таблицы по внешним ключам</td></tr>
+            <tr><td align="left">ЗАЧЕМ: иначе JOIN сломается<br/>без справочной таблицы</td></tr></table>>];
+        g_fewshot [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>few-shot retrieval</b></td></tr>
+            <tr><td align="left">@brief похожие примеры NL→SQL из датасета</td></tr>
+            <tr><td align="left">ЗАЧЕМ: модель пишет в нужном стиле,<br/>+3-5% точности</td></tr></table>>];
+        g_prompt [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>сборка промпта</b></td></tr>
+            <tr><td align="left">@brief DDL + few-shot + reflection-уроки</td></tr>
+            <tr><td align="left">ЗАЧЕМ: дать LLM весь нужный контекст</td></tr></table>>];
+        g_llm [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
+            <tr><td><b>LLM генератор · Qwen2.5-Coder-32B</b></td></tr>
+            <tr><td align="left">@brief промпт → SQL</td></tr>
+            <tr><td align="left">ЗАЧЕМ: ядро — понять NL и написать SQL</td></tr></table>>];
 
-        g_qembed -> g_search -> g_fk -> g_prompt;
+        g_qembed -> g_search -> g_fk -> g_prompt -> g_llm;
         g_fewshot -> g_prompt;
-        g_prompt -> g_llm;
-        g_tools -> g_llm [style=dotted];
     }
 
-    // ═══════════ КОМПОНЕНТ: Судья (алгоритмы + модели) ═══════════
+    // ═══════════ КОМПОНЕНТ: Судья ═══════════
     subgraph cluster_aud {
-        label="КОМПОНЕНТ: Судья (аудитор)  —  алгоритмы + модели";
+        label="КОМПОНЕНТ: Судья (аудитор)  —  алгоритмы + модели в одном поле";
         labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
         style="rounded,filled"; color="#2E7D32"; fillcolor="#E8F5E9";
 
-        // ── Phase 1: детерминированные алгоритмы ──
         subgraph cluster_p1 {
-            label="Phase 1 — детерминированно (алгоритмы)";
+            label="Phase 1 — детерминированно (алгоритмы): быстро, надёжно, аудируемо";
             labeljust="l"; fontsize=11; style="rounded,filled"; color="#43A047"; fillcolor="#F1F8E9";
-            sql_parser [label="SQL-парсер pglast\nsql → AST", shape=component, fillcolor="#CE93D8"];
-            rules      [label="правила R001-R013\n(обход AST)", fillcolor="#90CAF9"];
-            sensitive  [label="детектор sensitive R009\nregex + Luhn/СНИЛС", fillcolor="#90CAF9"];
-            explain    [label="EXPLAIN-анализ\n(cost, seq scan)", fillcolor="#90CAF9"];
+            sql_parser [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#CE93D8">
+                <tr><td><b>SQL-парсер pglast</b></td></tr>
+                <tr><td align="left">@brief sql → AST (дерево разбора)</td></tr>
+                <tr><td align="left">ЗАЧЕМ: анализ структуры точнее регекса,<br/>устойчив к форматированию/обфускации</td></tr></table>>];
+            rules [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+                <tr><td><b>правила R001-R013 (обход AST)</b></td></tr>
+                <tr><td align="left">@brief SELECT*, DML без WHERE, UNION, и т.д.</td></tr>
+                <tr><td align="left">ЗАЧЕМ: детерминированно ловить<br/>9 классов уязвимостей</td></tr></table>>];
+            sensitive [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+                <tr><td><b>детектор sensitive R009</b></td></tr>
+                <tr><td align="left">@brief regex имён + Luhn/СНИЛС в значениях</td></tr>
+                <tr><td align="left">ЗАЧЕМ: найти паспорта/карты/пароли (152-ФЗ)</td></tr></table>>];
+            explain [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+                <tr><td><b>EXPLAIN-анализ</b></td></tr>
+                <tr><td align="left">@brief план запроса: cost, seq scan, cartesian</td></tr>
+                <tr><td align="left">ЗАЧЕМ: оценить тяжесть БЕЗ исполнения данных</td></tr></table>>];
             sql_parser -> rules;
         }
-        // ── Phase 1.5: лёгкая ML-модель ──
         subgraph cluster_p15 {
-            label="Phase 1.5 — ML-классификатор";
+            label="Phase 1.5 — ML-классификатор: ловит то, что правила пропускают";
             labeljust="l"; fontsize=11; style="rounded,filled"; color="#43A047"; fillcolor="#F1F8E9";
-            codebert [label="CodeBERT classifier\n(SQLQueryShield)\nmalicious / safe", fillcolor="#FFB74D"];
+            codebert [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
+                <tr><td><b>CodeBERT classifier (SQLQueryShield)</b></td></tr>
+                <tr><td align="left">@brief sql → P(malicious / safe)</td></tr>
+                <tr><td align="left">ЗАЧЕМ: статистический сигнал поверх правил;<br/>обучается на корпусе SQLi</td></tr></table>>];
         }
-        // ── Phase 2: LLM-судья + RAG ──
         subgraph cluster_p2 {
-            label="Phase 2 — LLM-триаж + RAG";
+            label="Phase 2 — LLM-триаж + RAG: контекст, объяснения, FP-фильтр";
             labeljust="l"; fontsize=11; style="rounded,filled"; color="#43A047"; fillcolor="#F1F8E9";
-            rag      [label="RAG retrieval\nBM25 + dense (CWE/CAPEC)", fillcolor="#90CAF9"];
-            judge_llm[label="LLM судья\nQwen2.5-7B", fillcolor="#FFB74D"];
+            rag [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+                <tr><td><b>RAG retrieval (BM25 + dense)</b></td></tr>
+                <tr><td align="left">@brief поиск по базе CWE / CAPEC / OWASP</td></tr>
+                <tr><td align="left">ЗАЧЕМ: дать судье знания + верифицируемые ссылки</td></tr></table>>];
+            judge_llm [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
+                <tr><td><b>LLM судья · Qwen2.5-7B</b></td></tr>
+                <tr><td align="left">@brief триаж findings + объяснение на русском</td></tr>
+                <tr><td align="left">ЗАЧЕМ: отсеять ложные срабатывания,<br/>дать рекомендацию (прозрачность для аналитика)</td></tr></table>>];
             rag -> judge_llm;
         }
-        aggregate [label="агрегатор\nrisk = MAX, approved = risk<4.0\n→ AuditResult", fillcolor="#90CAF9"];
+        aggregate [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>агрегатор вердикта</b></td></tr>
+            <tr><td align="left">@brief risk = MAX по находкам; approved = risk &lt; 4.0</td></tr>
+            <tr><td align="left">ЗАЧЕМ: одна критичная не размывается мелкими</td></tr></table>>];
 
         rules -> aggregate; sensitive -> aggregate; explain -> aggregate;
         codebert -> aggregate; judge_llm -> aggregate;
@@ -91,22 +143,36 @@ digraph Target {
 
     // ═══════════ КОМПОНЕНТ: Reflector ═══════════
     subgraph cluster_refl {
-        label="КОМПОНЕНТ: Reflector  (in-context loop)";
+        label="КОМПОНЕНТ: Reflector  —  генератор учится на ошибках (in-context loop)";
         labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
         style="rounded,filled"; color="#2E7D32"; fillcolor="#E8F5E9";
-        refl_model [label="reflector\nQwen-7B / FLAN-T5\nfindings → Lesson", fillcolor="#FFB74D"];
-        refl_dedup [label="дедуп + окно 5\n(память уроков)", fillcolor="#90CAF9"];
+        refl_model [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
+            <tr><td><b>reflector · Qwen-7B / FLAN-T5</b></td></tr>
+            <tr><td align="left">@brief findings судьи → короткий «урок»</td></tr>
+            <tr><td align="left">ЗАЧЕМ: ответ на гл. вопрос ТЗ —<br/>генератор не повторяет ошибку</td></tr></table>>];
+        refl_dedup [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>дедуп + окно 5 уроков</b></td></tr>
+            <tr><td align="left">@brief память последних уроков</td></tr>
+            <tr><td align="left">ЗАЧЕМ: не зашумлять промпт устаревшим</td></tr></table>>];
         refl_model -> refl_dedup;
     }
 
     // ═══════════ КОМПОНЕНТ: Оркестратор ═══════════
     subgraph cluster_orch {
-        label="КОМПОНЕНТ: Оркестратор";
+        label="КОМПОНЕНТ: Оркестратор  —  крутит цикл и хранит состояние";
         labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
         style="rounded,filled"; color="#1E88E5"; fillcolor="#E3F2FD";
-        cycle   [label="LangGraph цикл\ngen→audit→reflect (≤5)", fillcolor="#90CAF9"];
-        persist [label="PostgresSaver\ncheckpoints / time-travel", shape=cylinder, fillcolor="#B0BEC5"];
-        decide  [label="approved?", shape=diamond, fillcolor="#FFF9C4"];
+        cycle [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>LangGraph цикл</b></td></tr>
+            <tr><td align="left">@brief gen → audit → reflect, до 5 итераций</td></tr>
+            <tr><td align="left">ЗАЧЕМ: связать узлы, вести лог итераций</td></tr></table>>];
+        decide [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFF9C4">
+            <tr><td><b>approved?</b></td></tr>
+            <tr><td align="left">@brief risk &lt; 4.0 ?</td></tr></table>>];
+        persist [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
+            <tr><td><b>PostgresSaver</b></td></tr>
+            <tr><td align="left">@brief checkpoints состояния</td></tr>
+            <tr><td align="left">ЗАЧЕМ: возобновление, time-travel, прозрачный лог</td></tr></table>>];
         cycle -> decide;
     }
 
@@ -115,9 +181,18 @@ digraph Target {
         label="КОМПОНЕНТ: Инфраструктура / хранилища";
         labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
         style="rounded,filled"; color="#607D8B"; fillcolor="#FAFAFA";
-        sandbox [label="Postgres sandbox\n(EXPLAIN, faker, state)", shape=cylinder, fillcolor="#B0BEC5"];
-        vstore  [label="Vector store\n(RAG: CWE/CAPEC + схема)", shape=cylinder, fillcolor="#B0BEC5"];
-        langfuse[label="Langfuse\n(трейсы, scoring)", shape=cylinder, fillcolor="#B0BEC5"];
+        sandbox [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
+            <tr><td><b>Postgres sandbox</b></td></tr>
+            <tr><td align="left">@brief EXPLAIN, faker-данные, state</td></tr>
+            <tr><td align="left">ЗАЧЕМ: проверять SQL без боевой БД</td></tr></table>>];
+        vstore [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
+            <tr><td><b>Vector store</b></td></tr>
+            <tr><td align="left">@brief RAG (CWE/CAPEC) + эмбеддинги схемы</td></tr>
+            <tr><td align="left">ЗАЧЕМ: семантический поиск знаний и таблиц</td></tr></table>>];
+        langfuse [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
+            <tr><td><b>Langfuse</b></td></tr>
+            <tr><td align="left">@brief трейсы, scoring, A/B</td></tr>
+            <tr><td align="left">ЗАЧЕМ: наблюдаемость + аналитика (15 баллов)</td></tr></table>>];
     }
 
     // ═══════════ ПОТОК между компонентами ═══════════
@@ -126,7 +201,7 @@ digraph Target {
     faiss_idx -> g_search [ltail=cluster_schema, style=dotted, label="индекс схемы"];
     catalog -> g_prompt [style=dotted, label="DDL в промпт"];
     g_llm -> sql_parser [lhead=cluster_aud, label="2. sql_candidate"];
-    catalog -> rules [style=dotted, label="сверка таблиц", constraint=false];
+    catalog -> rules [style=dotted, label="сверка имён", constraint=false];
     explain -> sandbox [ltail=cluster_p1, style=dotted, dir=both, label="EXPLAIN"];
     rag -> vstore [style=dotted, dir=both, label="поиск знаний"];
     aggregate -> decide [ltail=cluster_aud, lhead=cluster_orch, label="AuditResult"];
@@ -140,10 +215,10 @@ digraph Target {
     subgraph cluster_leg {
         label="Легенда (природа узла)"; labeljust="l"; fontsize=12;
         style="rounded"; color="#BDBDBD";
-        lp [label="парсер (текст → структура)", shape=component, fillcolor="#CE93D8"];
-        la [label="алгоритм (детерминированный)", shape=box, fillcolor="#90CAF9"];
-        lm [label="модель (ML / LLM)", shape=box, fillcolor="#FFB74D"];
-        ld [label="данные / хранилище", shape=cylinder, fillcolor="#B0BEC5"];
-        lp -> la -> lm -> ld [style=invis];
+        leg [label=<<table border="0" cellborder="1" cellspacing="0">
+            <tr><td bgcolor="#CE93D8">парсер (текст → структура/AST)</td></tr>
+            <tr><td bgcolor="#90CAF9">алгоритм (детерминированный)</td></tr>
+            <tr><td bgcolor="#FFB74D">модель (ML / LLM)</td></tr>
+            <tr><td bgcolor="#B0BEC5">данные / хранилище</td></tr></table>>];
     }
 }
