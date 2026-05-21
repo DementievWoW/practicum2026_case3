@@ -54,9 +54,12 @@ class MockLLMClient:
         user = " ".join(m["content"] for m in messages if m["role"] == "user")
         full = (system + " " + user).lower()
 
-        if "reflector" in system or "урок" in system:
-            text = self._mock_reflector(user)
-        elif "судья" in system or "auditor" in system or "judge" in system:
+        # Роутинг по РОЛИ из системного промпта.
+        # Важно: reflector у нас детерминированный (не через LLM), поэтому
+        # его ветки тут нет. Различаем только судью и генератора, причём
+        # по маркеру роли в начале system, а не по словам «урок» (они
+        # встречаются в reflection-памяти промпта генератора).
+        if "судья" in system or "auditor" in system or "judge" in system:
             text = self._mock_judge(user)
         else:
             text = self._mock_generator(full)
