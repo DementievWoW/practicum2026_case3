@@ -1,80 +1,105 @@
-// КАРТА СОСТОЯНИЯ КОДА — где заглушки (с файлами), каркас, что не написано.
-// 🟢 реальный каркас (тимлид) · 🟧 ЗАГЛУШКА/МОК в коде (файл) · ⬜ не написано (роль).
+// КАРТА СОСТОЯНИЯ КОДА — где заглушки (с файлами), готовый код, что не написано.
+// Поток слева-направо: task → ... → одобренный SQL → БД заказчика.
+// 🟢 готово · 🟧 ЗАГЛУШКА/МОК в коде (файл) · ⬜ не написано (роль).
 // Рендер: dot -Tpng docs/skeleton_mocks.dot -o docs/skeleton_mocks.png
 digraph Skeleton {
-    rankdir=TB;
+    rankdir=LR;
     compound=true;
     fontname="Helvetica";
     bgcolor="white";
-    nodesep=0.35; ranksep=0.6;
+    nodesep=0.35; ranksep=0.8;
     node [shape=plaintext, fontname="Helvetica"];
     edge [fontname="Helvetica", fontsize=9, color="#555555"];
 
-    task   [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#ECEFF1">
-        <tr><td><b>task (NL)</b></td></tr></table>>];
+    // ── вход (слева) ──
+    task [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#ECEFF1">
+        <tr><td><b>1. task (NL-запрос)</b></td></tr>
+        <tr><td align="left">«покажи договоры с просрочкой»</td></tr></table>>];
+
+    // ── выход (справа) ──
     result [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#ECEFF1">
         <tr><td><b>SystemResult</b></td></tr>
-        <tr><td bgcolor="#A5D6A7">🟢 каркас · contracts.py</td></tr></table>>];
+        <tr><td align="left">final_sql + audit_log</td></tr>
+        <tr><td bgcolor="#A5D6A7">🟢 готово · contracts.py</td></tr></table>>];
+    db [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#CFD8DC">
+        <tr><td><b>БД заказчика (PostgreSQL)</b></td></tr>
+        <tr><td align="left">исполняет платформа GreenData</td></tr>
+        <tr><td align="left"><i>наша система SQL не запускает (ТЗ)</i></td></tr></table>>];
+
+    // ═══════════ Оркестратор (ядро) ═══════════
+    subgraph cluster_orch {
+        label="Оркестратор — ядро системы (готово)";
+        labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
+        style="rounded,filled"; color="#1E88E5"; fillcolor="#E8F5E9";
+        cycle [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
+            <tr><td><b>цикл gen→audit→reflect</b></td></tr>
+            <tr><td bgcolor="#A5D6A7">🟢 готово · pipeline.py</td></tr></table>>];
+        decide [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFF9C4">
+            <tr><td><b>approved? (risk &lt; 4.0)</b></td></tr>
+            <tr><td bgcolor="#A5D6A7">🟢 готово · pipeline.py</td></tr></table>>];
+        contracts [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
+            <tr><td><b>контракты (Finding/Lesson/LLMClient)</b></td></tr>
+            <tr><td bgcolor="#A5D6A7">🟢 готово · contracts.py, llm/client.py</td></tr></table>>];
+        persist [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
+            <tr><td><b>PostgresSaver</b></td></tr>
+            <tr><td bgcolor="#ECEFF1">⬜ не написано → Аналитик</td></tr></table>>];
+        cycle -> decide;
+    }
 
     // ═══════════ Schema layer ═══════════
     subgraph cluster_schema {
         label="Schema layer";
         labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
         style="rounded,filled"; color="#1E88E5"; fillcolor="#E3F2FD";
-
         ddl_parser [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#CE93D8">
             <tr><td><b>DDL-парсер</b></td></tr>
             <tr><td bgcolor="#FFCC80"><b>🟧 ЗАГЛУШКА · schema/parser.py</b></td></tr>
             <tr><td bgcolor="#ECEFF1">реальный пишет: Данные</td></tr></table>>];
         catalog [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
             <tr><td><b>schema_catalog (структура)</b></td></tr>
-            <tr><td bgcolor="#A5D6A7">🟢 контракт · schema/models.py</td></tr></table>>];
+            <tr><td bgcolor="#A5D6A7">🟢 готово · schema/models.py</td></tr></table>>];
         card [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>карточки to_card()</b></td></tr>
-            <tr><td bgcolor="#A5D6A7">🟢 реальный · models.py</td></tr></table>>];
+            <tr><td bgcolor="#A5D6A7">🟢 готово · models.py</td></tr></table>>];
         sch_embed [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
             <tr><td><b>эмбеддинг карточек (e5)</b></td></tr>
             <tr><td bgcolor="#ECEFF1">⬜ не написано → Данные</td></tr></table>>];
         faiss_idx [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
             <tr><td><b>FAISS index</b></td></tr>
             <tr><td bgcolor="#ECEFF1">⬜ не написано → Данные</td></tr></table>>];
-
         ddl_parser -> catalog -> card -> sch_embed -> faiss_idx;
     }
 
     // ═══════════ Генератор ═══════════
     subgraph cluster_gen {
-        label="Генератор SQL";
+        label="2. Генератор SQL";
         labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
         style="rounded,filled"; color="#FB8C00"; fillcolor="#FFF3E0";
-
         g_search [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>schema linking (FAISS top-15)</b></td></tr>
             <tr><td bgcolor="#ECEFF1">⬜ не написано → LLM-инженер</td></tr></table>>];
         g_fk [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>FK-замыкание</b></td></tr>
-            <tr><td bgcolor="#A5D6A7">🟢 реальный · models.fk_closure()</td></tr></table>>];
+            <tr><td bgcolor="#A5D6A7">🟢 готово · models.fk_closure()</td></tr></table>>];
         g_fewshot [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>few-shot retrieval</b></td></tr>
             <tr><td bgcolor="#ECEFF1">⬜ не написано → LLM-инженер</td></tr></table>>];
         g_prompt [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>сборка промпта</b></td></tr>
-            <tr><td bgcolor="#A5D6A7">🟢 каркас · nodes/generator.py</td></tr></table>>];
+            <tr><td bgcolor="#A5D6A7">🟢 готово · nodes/generator.py</td></tr></table>>];
         g_llm [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
             <tr><td><b>LLM генератор · Qwen-32B</b></td></tr>
             <tr><td bgcolor="#FF8A65"><b>🟧 МОК · llm/mock.py</b></td></tr>
             <tr><td bgcolor="#ECEFF1">реальный LLM: LLM-инженер</td></tr></table>>];
-
         g_search -> g_fk -> g_prompt -> g_llm;
         g_fewshot -> g_prompt;
     }
 
     // ═══════════ Судья ═══════════
     subgraph cluster_aud {
-        label="Судья (аудитор)";
+        label="3. Судья (аудитор)";
         labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
         style="rounded,filled"; color="#2E7D32"; fillcolor="#E8F5E9";
-
         subgraph cluster_p1 {
             label="Phase 1 — алгоритмы";
             labeljust="l"; fontsize=11; style="rounded,filled"; color="#43A047"; fillcolor="#F1F8E9";
@@ -115,15 +140,14 @@ digraph Skeleton {
         }
         aggregate [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>агрегатор вердикта</b></td></tr>
-            <tr><td bgcolor="#A5D6A7">🟢 каркас · nodes/auditor.py</td></tr></table>>];
-
+            <tr><td bgcolor="#A5D6A7">🟢 готово · nodes/auditor.py</td></tr></table>>];
         rules -> aggregate; sensitive -> aggregate; explain -> aggregate;
         codebert -> aggregate; judge_llm -> aggregate;
     }
 
     // ═══════════ Reflector ═══════════
     subgraph cluster_refl {
-        label="Reflector (in-context loop)";
+        label="4. Reflector (in-context loop)";
         labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
         style="rounded,filled"; color="#2E7D32"; fillcolor="#E8F5E9";
         refl_model [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
@@ -132,28 +156,8 @@ digraph Skeleton {
             <tr><td bgcolor="#ECEFF1">детермин. lookup; реальный → LLM-инженер</td></tr></table>>];
         refl_dedup [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
             <tr><td><b>дедуп + окно 5</b></td></tr>
-            <tr><td bgcolor="#A5D6A7">🟢 реальный · nodes/reflector.py</td></tr></table>>];
+            <tr><td bgcolor="#A5D6A7">🟢 готово · nodes/reflector.py</td></tr></table>>];
         refl_model -> refl_dedup;
-    }
-
-    // ═══════════ Оркестратор (зона тимлида) ═══════════
-    subgraph cluster_orch {
-        label="Оркестратор  —  КАРКАС ТИМЛИДА (реальный)";
-        labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
-        style="rounded,filled"; color="#1E88E5"; fillcolor="#E8F5E9";
-        cycle [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#90CAF9">
-            <tr><td><b>цикл gen→audit→reflect</b></td></tr>
-            <tr><td bgcolor="#A5D6A7">🟢 реальный · pipeline.py</td></tr></table>>];
-        decide [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFF9C4">
-            <tr><td><b>approved? (risk &lt; 4.0)</b></td></tr>
-            <tr><td bgcolor="#A5D6A7">🟢 реальный · pipeline.py</td></tr></table>>];
-        contracts [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
-            <tr><td><b>контракты (Finding/Lesson/LLMClient)</b></td></tr>
-            <tr><td bgcolor="#A5D6A7">🟢 реальный · contracts.py, llm/client.py</td></tr></table>>];
-        persist [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#B0BEC5">
-            <tr><td><b>PostgresSaver</b></td></tr>
-            <tr><td bgcolor="#ECEFF1">⬜ не написано → Аналитик</td></tr></table>>];
-        cycle -> decide;
     }
 
     // ═══════════ Инфраструктура ═══════════
@@ -172,24 +176,25 @@ digraph Skeleton {
             <tr><td bgcolor="#ECEFF1">⬜ не написано → Аналитик</td></tr></table>>];
     }
 
-    // ═══════════ ПОТОК ═══════════
+    // ═══════════ ПОТОК (слева → направо) ═══════════
     task -> cycle [lhead=cluster_orch];
-    cycle -> g_prompt [lhead=cluster_gen, label="1. генерация"];
+    cycle -> g_prompt [lhead=cluster_gen, label="2. генерация"];
     faiss_idx -> g_search [ltail=cluster_schema, style=dotted];
-    g_llm -> sql_parser [lhead=cluster_aud, label="2. sql_candidate"];
+    g_llm -> sql_parser [lhead=cluster_aud, label="3. sql_candidate"];
     explain -> sandbox [ltail=cluster_p1, style=dotted, dir=both];
     rag -> vstore [style=dotted, dir=both];
     aggregate -> decide [ltail=cluster_aud, lhead=cluster_orch, label="AuditResult"];
-    decide -> refl_model [lhead=cluster_refl, label="нет", color="#E53935", fontcolor="#E53935"];
+    decide -> refl_model [lhead=cluster_refl, label="не одобрено", color="#E53935", fontcolor="#E53935"];
     refl_dedup -> g_prompt [ltail=cluster_refl, lhead=cluster_gen, label="reflection", style=dashed, color="#8E24AA", fontcolor="#8E24AA", constraint=false];
-    decide -> result [label="да", color="#43A047", fontcolor="#43A047"];
+    decide -> result [label="одобрено", color="#43A047", fontcolor="#43A047"];
+    result -> db [label="одобренный SQL →", color="#43A047", fontcolor="#43A047"];
     cycle -> langfuse [style=dotted, color="#BDBDBD"];
 
     // ═══════════ Легенда ═══════════
     subgraph cluster_leg {
         label="Состояние кода"; labeljust="l"; fontsize=12; style="rounded"; color="#BDBDBD";
         leg [label=<<table border="0" cellborder="1" cellspacing="0">
-            <tr><td bgcolor="#A5D6A7">🟢 реальный каркас (тимлид) — работает, файл указан</td></tr>
+            <tr><td bgcolor="#A5D6A7">🟢 готовый код — работает, файл указан</td></tr>
             <tr><td bgcolor="#FFCC80">🟧 ЗАГЛУШКА в коде — есть файл, реализует роль</td></tr>
             <tr><td bgcolor="#FF8A65">🟧 МОК LLM — llm/mock.py (потом реальный LLM)</td></tr>
             <tr><td bgcolor="#ECEFF1">⬜ не написано — ещё нет даже заглушки (роль указана)</td></tr></table>>];
