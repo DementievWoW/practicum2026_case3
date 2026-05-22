@@ -1,0 +1,9 @@
+# Prometheus скрейпит /metrics приложения (заглушка на :9100 хоста).
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: sqlsec-app
+    static_configs:
+      - targets: ["host.docker.internal:9100"]
