@@ -33,6 +33,7 @@
 | 0009 | [Observability and state persistence: Langfuse + PostgresSaver](0009-observability-and-persistence.md) | Accepted |
 | 0010 | [PL/pgSQL audit path via plpgsql_check (bonus track)](0010-plpgsql-bonus-path.md) | Accepted |
 | 0011 | [Feature engineering layer: SQL feature table for risk scoring](0011-feature-engineering-layer.md) | Accepted |
+| 0012 | [Ensemble gen/judge: bagging/boosting + asymmetric retrieval](0012-ensemble-gen-judge-asymmetric-retrieval.md) | Proposed |
 
 Дальше по мере прохождения пайплайна (схема-каталог → промпт-каркас →
-аудитор → датасет → метрики → демо) будут добавляться ADR-0011+.
+аудитор → датасет → метрики → демо) будут добавляться ADR-0013+.
