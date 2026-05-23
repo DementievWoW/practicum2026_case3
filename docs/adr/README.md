@@ -32,6 +32,7 @@
 | 0008 | [LLM choice and inference provider](0008-llm-choice-and-provider.md) | Accepted |
 | 0009 | [Observability and state persistence: Langfuse + PostgresSaver](0009-observability-and-persistence.md) | Accepted |
 | 0010 | [PL/pgSQL audit path via plpgsql_check (bonus track)](0010-plpgsql-bonus-path.md) | Accepted |
+| 0011 | [Feature engineering layer: SQL feature table for risk scoring](0011-feature-engineering-layer.md) | Accepted |
 
 Дальше по мере прохождения пайплайна (схема-каталог → промпт-каркас →
 аудитор → датасет → метрики → демо) будут добавляться ADR-0011+.

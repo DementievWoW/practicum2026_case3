@@ -1,0 +1,116 @@
+// Архитектура GreenData SQL Security System
+// Рендер: dot -Tpng docs/architecture.dot -o docs/architecture.png
+digraph Architecture {
+    rankdir=TB;
+    fontname="Helvetica";
+    bgcolor="white";
+    nodesep=0.4;
+    ranksep=0.55;
+    node [fontname="Helvetica", fontsize=11, style="filled,rounded", shape=box];
+    edge [fontname="Helvetica", fontsize=9, color="#555555"];
+
+    // ── Легенда цветов ──
+    // голубой  = детерминированный код (алгоритмы, без LLM)
+    // оранжевый= LLM-вызов
+    // зелёный  = ML-эмбеддинги (не LLM)
+    // серый    = инфраструктура / хранилище
+
+    // ───────── Вход / Выход ─────────
+    user      [label="Пользователь / Аналитик\n«покажи клиентов с просрочкой»", shape=ellipse, fillcolor="#ECEFF1", color="#90A4AE"];
+    result    [label="SystemResult\nfinal_sql + audit_log", shape=ellipse, fillcolor="#E8F5E9", color="#66BB6A"];
+
+    // ───────── UI слой ─────────
+    ui        [label="UI / API\n(Streamlit + FastAPI)\nконтракт baseline1.run()", fillcolor="#ECEFF1", color="#90A4AE"];
+
+    // ───────── LangGraph контур ─────────
+    subgraph cluster_graph {
+        label="LangGraph StateGraph  (PostgresSaver checkpoints)";
+        labeljust="l";
+        fontsize=13;
+        fontname="Helvetica-Bold";
+        style="rounded";
+        color="#5C6BC0";
+        bgcolor="#F5F6FF";
+
+        schema_link [label="schema_link\nFAISS top-15 + FK-замыкание", fillcolor="#E8F5E9", color="#66BB6A"];
+        generator   [label="generator  ●LLM\nQwen-Coder 32B\n+ few-shot + reflection", fillcolor="#FFE0B2", color="#FB8C00"];
+
+        // Аудитор (вложенный кластер)
+        subgraph cluster_auditor {
+            label="auditor  (гибрид)";
+            labeljust="l";
+            fontsize=11;
+            style="rounded";
+            color="#26A69A";
+            bgcolor="#E0F2F1";
+
+            phase1 [label="Phase 1  ○алгоритм\npglast AST + EXPLAIN\n+ sensitive regex\n→ list[Finding]", fillcolor="#B3E5FC", color="#039BE5"];
+            phase2 [label="Phase 2  ●LLM-судья\nтриаж findings + RAG\n→ AuditResult", fillcolor="#FFE0B2", color="#FB8C00"];
+            phase1 -> phase2 [label="findings"];
+        }
+
+        reflector [label="reflector  ●LLM\nQwen-7B\nfindings → Lesson", fillcolor="#FFE0B2", color="#FB8C00"];
+        finalize  [label="finalize\nсборка SystemResult", fillcolor="#B3E5FC", color="#039BE5"];
+
+        // потоки внутри графа
+        schema_link -> generator;
+        generator   -> phase1 [label="sql_candidate"];
+        phase2      -> finalize   [label="approved\n(risk < 4.0)", color="#43A047", fontcolor="#43A047"];
+        phase2      -> reflector  [label="not approved", color="#E53935", fontcolor="#E53935"];
+        reflector   -> generator  [label="state.reflection\n(memory of mistakes)", style=dashed, color="#8E24AA", fontcolor="#8E24AA"];
+    }
+
+    // ───────── Внешние сервисы ─────────
+    subgraph cluster_infra {
+        label="Инфраструктура";
+        labeljust="l";
+        fontsize=12;
+        fontname="Helvetica-Bold";
+        style="rounded";
+        color="#90A4AE";
+        bgcolor="#FAFAFA";
+
+        sandbox [label="Postgres sandbox\ndata_model.sql + faker\nEXPLAIN, plpgsql_check", shape=cylinder, fillcolor="#CFD8DC", color="#607D8B"];
+        rag     [label="RAG store\nCWE / CAPEC / OWASP / PG-docs\n(Qdrant или pgvector)", shape=cylinder, fillcolor="#CFD8DC", color="#607D8B"];
+        langfuse[label="Langfuse self-host\nтрейсы + scoring + A/B", shape=cylinder, fillcolor="#CFD8DC", color="#607D8B"];
+    }
+
+    // ───────── Tools ─────────
+    tools_gen [label="tools:\nget_schema()\nget_sample_rows()\nget_few_shot()", shape=note, fillcolor="#FFF9C4", color="#FBC02D"];
+    tools_aud [label="tools:\nsearch_rag_cwe()\nexplain_sql()\nlookup_capec()", shape=note, fillcolor="#FFF9C4", color="#FBC02D"];
+
+    // ───────── Связи внешнего мира ─────────
+    user -> ui;
+    ui -> schema_link [label="task"];
+    finalize -> ui;
+    ui -> result;
+
+    schema_link -> rag        [style=dotted, dir=both, label="эмбеддинги схемы"];
+    generator   -> tools_gen  [style=dotted, dir=both];
+    tools_gen   -> sandbox    [style=dotted];
+    phase1      -> sandbox    [style=dotted, dir=both, label="EXPLAIN"];
+    phase2      -> tools_aud  [style=dotted, dir=both];
+    tools_aud   -> rag        [style=dotted];
+
+    // observability
+    generator -> langfuse [style=dotted, color="#BDBDBD"];
+    phase2    -> langfuse [style=dotted, color="#BDBDBD"];
+    reflector -> langfuse [style=dotted, color="#BDBDBD"];
+
+    // ───────── Легенда ─────────
+    subgraph cluster_legend {
+        label="Легенда";
+        labeljust="l";
+        fontsize=11;
+        style="rounded";
+        color="#BDBDBD";
+        bgcolor="white";
+        l1 [label="○ детерминированный код", fillcolor="#B3E5FC", color="#039BE5", shape=box, width=2.4];
+        l2 [label="● LLM-вызов", fillcolor="#FFE0B2", color="#FB8C00", shape=box, width=2.4];
+        l3 [label="ML-эмбеддинги (не LLM)", fillcolor="#E8F5E9", color="#66BB6A", shape=box, width=2.4];
+        l4 [label="инфраструктура / хранилище", fillcolor="#CFD8DC", color="#607D8B", shape=box, width=2.4];
+        l1 -> l2 [style=invis];
+        l2 -> l3 [style=invis];
+        l3 -> l4 [style=invis];
+    }
+}

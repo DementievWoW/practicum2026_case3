@@ -22,13 +22,34 @@
 
 ```
 dataset/
-├── seed_examples.py    # SEED — рукописные примеры (ИСТОЧНИК, версионируется)
-├── build_dataset.py    # SEED → back-translation → data/dataset_v1.jsonl
-└── README.md           # этот файл
+├── seed_examples.py     # SEED — рукописные примеры-якоря (ИСТОЧНИК, версионируется)
+├── build_dataset.py     # SEED → back-translation → JSONL (мелкий набор-образец)
+├── generate_dataset.py  # СИНТЕЗ 500 записей по реальной схеме (основной билдер)
+├── sensitive_overlay.sql# PII-overlay sim_* для класса DIRECT_SENSITIVE
+└── README.md            # этот файл
 
-src/case3/dataset/models.py   # SeedExample, DatasetRecord
-data/dataset_v1.jsonl         # СГЕНЕРИРОВАННЫЙ итог (gitignore)
+src/case3/dataset/models.py   # SeedExample, DatasetRecord, VULN_CLASSES
+data/schema_catalog.json      # схема заказчика (60 таблиц) — вход генератора
+data/dataset_v1.jsonl         # СГЕНЕРИРОВАННЫЙ итог, 500 записей (gitignore)
 ```
+
+## Генерация 500 записей
+
+```bash
+python dataset/generate_dataset.py            # 500 → data/dataset_v1.jsonl
+python dataset/generate_dataset.py --n 1000   # другой объём
+```
+
+`generate_dataset.py` читает `schema_catalog.json`, классифицирует колонки
+каждой таблицы (id / FK / сумма / дата / текст / статус) и собирает валидный
+SQL по шаблонам на **реальных таблицах и колонках**. Рукописные seed-примеры
+подмешиваются как приоритетные якоря, дальше пул добивается шаблонами.
+Генерация **детерминированна** (`random.Random(42)` только для split).
+
+Текущий состав: **500** записей = **300 safe + 200 уязвимых** (по ~18–22 на
+каждый из 10 классов), 50 задействованных таблиц, 0 дублей SQL, train/eval ≈ 405/95.
+Все запросы парсятся `sqlglot` (postgres-диалект); классические инъекции
+синтаксически валидны — уязвимость семантическая.
 
 ## Как дополнять (роль «Данные»)
 
@@ -38,8 +59,9 @@ data/dataset_v1.jsonl         # СГЕНЕРИРОВАННЫЙ итог (gitigno
 4. Проверь метки: `python dataset/seed_examples.py` (валидация vuln_class/difficulty).
 5. Пересобери: `python dataset/build_dataset.py`.
 
-**Цель — 300 SQL** (сейчас 14 как образец). Баланс по ADR-0006:
-~200 safe + ~100 уязвимых, по всем 9 классам.
+**Текущий объём — 500 SQL** (`generate_dataset.py`). Баланс: 300 safe +
+200 уязвимых по всем 10 классам. Чтобы добавить выверенные примеры —
+правь `seed_examples.py` (они идут якорями впереди шаблонных).
 
 ## Формат записи (dataset_v1.jsonl)
 
@@ -58,14 +80,18 @@ data/dataset_v1.jsonl         # СГЕНЕРИРОВАННЫЙ итог (gitigno
 
 ## Что пока mock (заменить в проде)
 
-- **Back-translation** (`mock_back_translate`) — сейчас берёт `intent` и делает
-  2 стиля. В проде — LLM-вызов (Qwen / GPT-4o-mini): «опиши SQL → дай 2 NL».
-- **Валидация SQL** — пока только метки. В проде: `pglast.parse_sql` +
-  исполнение safe-SELECT в sandbox-Postgres (ADR-0007 quality-gate).
+- **NL-формулировки** — генерятся из `intent` по шаблонам (детерминированно,
+  без LLM). В проде можно усилить LLM-парафразом (Qwen / GPT-4o-mini):
+  «опиши SQL → дай 2 NL-вопроса аналитика».
+- **Валидация SQL** — структурная (`sqlglot` парсит все 500). В проде ещё:
+  исполнение safe-SELECT в sandbox-Postgres + `EXPLAIN` (ADR-0007 quality-gate).
 
-## Открытый вопрос к заказчику
+## Sensitive-колонки
 
-В схеме **нет очевидных PII-колонок** (password/passport). Для класса
-`DIRECT_SENSITIVE` чувствительными считаем финансовые суммы
-(`credit_amount`, обороты). **Список «sensitive» колонок нужно уточнить
-у заказчика** (см. вопросы кураторам).
+В основной мета-схеме PII всё же **есть**: `sys_employee` (`email`, `phone`,
+`birthday`, `first_name`/`sur_name`), `sys_company` (`inn`, `contact_phone`,
+`attr_email`). Плюс синтетический overlay `sim_*` (`sensitive_overlay.sql`):
+паспорт, СНИЛС, номер карты, CVV, хеш пароля, API-токен. На них и построен
+класс `DIRECT_SENSITIVE` (`SENSITIVE_COLS` в `generate_dataset.py`).
+Финальный список «sensitive» для прода — **уточнить у заказчика** (вопрос
+кураторам); правится в одном месте — словаре `SENSITIVE_COLS`.
