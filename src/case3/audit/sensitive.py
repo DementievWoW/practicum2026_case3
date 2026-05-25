@@ -37,6 +37,9 @@ SENSITIVE_PATTERNS: list[tuple[str, str, str, int]] = [
      "payment", "critical", 8),
     (r"(?i)^(ssn|social[_-]?security|passport|inn|snils|ogrn|паспорт|снилс|инн)$",
      "national_id", "high", 7),
+    (r"(?i)(?:^|_)(check_account|account[_-]?(?:number|num|no)|corr[_-]?account|"
+     r"bank_ident(?:_number)?|bik|bic|iban|swift)(?:$|_)",
+     "financial_account", "high", 7),
     (r"(?i)(?:^|_)(e[_-]?mail|email|phone|mobile|telephone|tel|телефон)(?:$|_)",
      "contact", "medium", 5),
     (r"(?i)^(first|second|sur|last|full|middle|maiden)_name$",
