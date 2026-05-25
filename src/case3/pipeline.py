@@ -117,6 +117,8 @@ class SQLSecurityPipeline(SQLSecuritySystem):
                 lines.append(f"Правки: {il.revision_notes}")
             for v in a.vulnerabilities:
                 lines.append(f"  ⚠ {v.vuln_class} ({v.risk_score:.1f}): {v.description}")
+                if v.recommendation:
+                    lines.append(f"      ↳ фикс: {v.recommendation}")
             lines.append(f"Вердикт: {a.summary}")
         return "\n".join(lines)
 
@@ -140,8 +142,18 @@ def run_pipeline(
         from case3.llm.mock import MockLLMClient
         llm = MockLLMClient(scenario="evolve")
 
-    generator = LLMGenerator(llm=llm, db_schema=db_schema)
-    auditor = HybridAuditor(llm=llm)
+    # Асимметричный few-shot store (ADR-0012): positives → генератору, negatives → судье.
+    store = None
+    try:
+        from case3.retrieval import FewShotStore
+        store = FewShotStore()  # train-сплит data/dataset_v1.jsonl
+        if not (store.positives or store.negatives):
+            store = None
+    except Exception:
+        store = None
+
+    generator = LLMGenerator(llm=llm, db_schema=db_schema, store=store)
+    auditor = HybridAuditor(llm=llm, store=store)
     reflector = Reflector()
     pipeline = SQLSecurityPipeline(generator, auditor, reflector, max_iterations)
     return pipeline.run(task_description)

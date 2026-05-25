@@ -21,17 +21,36 @@ class LLMGenerator(SQLGenerator):
     @brief Генератор поверх LLMClient.
     @param llm        Клиент LLM (mock или реальный).
     @param db_schema  Машиночитаемая схема (для промпта). Опц.
+    @param store      Асимметричный few-shot store (ADR-0012). Генератору отдаём
+                      ТОЛЬКО positives (безопасные эталоны «как надо»). Опц.
+    @param k_shots    Сколько few-shot примеров подмешивать.
     """
 
-    def __init__(self, llm: LLMClient, db_schema: dict | None = None, **kwargs):
+    def __init__(self, llm: LLMClient, db_schema: dict | None = None,
+                 store=None, k_shots: int = 3, **kwargs):
         super().__init__(db_schema=db_schema, **kwargs)
         self.llm = llm
+        self.store = store
+        self.k_shots = k_shots
 
-    def _system_prompt(self, reflection: list[Lesson]) -> str:
+    def _fewshot_block(self, task_description: str) -> str:
+        """@brief Блок позитивных few-shot (безопасные NL→SQL) по близости к задаче."""
+        if not self.store:
+            return ""
+        shots = self.store.retrieve_positive(task_description, k=self.k_shots)
+        if not shots:
+            return ""
+        lines = ["\n\n### Примеры безопасных запросов (ориентир «как надо»):"]
+        for ex in shots:
+            lines.append(f"-- {ex.nl}\n{ex.sql}")
+        return "\n".join(lines)
+
+    def _system_prompt(self, reflection: list[Lesson], task_description: str) -> str:
         base = (
             "Ты — генератор PostgreSQL-запросов по описанию задачи и схеме БД. "
             "Возвращай только безопасный SQL."
         )
+        base += self._fewshot_block(task_description)
         if reflection:
             lessons = "\n".join(f"- {l}" for l in reflection)
             base += (
@@ -49,12 +68,12 @@ class LLMGenerator(SQLGenerator):
         reflection: list[Lesson] | None = None,
     ) -> str:
         """
-        @brief NL-задача (+ reflection) → SQL.
+        @brief NL-задача (+ positive few-shot + reflection) → SQL.
         @param reflection  Накопленные уроки (in-context reflection-loop).
         @return SQL-строка.
         """
         messages = [
-            {"role": "system", "content": self._system_prompt(reflection or [])},
+            {"role": "system", "content": self._system_prompt(reflection or [], task_description)},
             {"role": "user", "content": task_description},
         ]
         resp = self.llm.chat(messages, temperature=0.3)
