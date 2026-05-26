@@ -15,8 +15,14 @@ env/
 # Jupyter
 .ipynb_checkpoints/
 
-# Data / artifacts (тяжёлые, не для гита)
-data/
+# Data / artifacts: тяжёлые/runtime-генерируемые — не для гита.
+# Каталог data/ сам нужен (там schema_catalog.json и dataset_v1.jsonl),
+# поэтому игнорим только конкретные тяжёлые/генерируемые файлы.
+# embeddings_cache.json (~1.4 МБ) генерится из HF API на лету
+data/embeddings_cache.json
+data/*.parquet
+data/*.csv
+data/*.db
 artifacts/
 reports/
 

@@ -93,6 +93,10 @@ services:
       LANGFUSE_HOST: http://langfuse:3000
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      # HuggingFace Inference API: bge-m3 embeddings для семантического ранжирования
+      # в SchemaLinker/FewShotStore. Без токена — graceful fallback на лексику.
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_EMBEDDING_MODEL: ${HF_EMBEDDING_MODEL:-BAAI/bge-m3}
     secrets:
       - llm_api_key
 

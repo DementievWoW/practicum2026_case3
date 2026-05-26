@@ -151,21 +151,37 @@ def validate(sql: str) -> list[Finding]:
             if col.lower() not in cols:
                 bad.append((alias_or_table, col))
 
-        # 2b. одиночные идентификаторы в SELECT-листе и WHERE/GROUP/ORDER —
-        #     полезно когда SQL ссылается на единственную таблицу без алиаса.
-        sel = re.search(r"\bselect\s+(.+?)\s+from\b", sql_no_lit, re.I | re.S)
-        if sel:
-            sel_part = sel.group(1)
-            # выкидываем алиасы `... AS x`
-            sel_part = re.sub(r"\bas\s+\w+", " ", sel_part, flags=re.I)
-            for tok in re.findall(r"\b[a-zA-Z_][\w]*\b", sel_part):
+        # 2b. одиночные идентификаторы — SELECT-лист + WHERE + GROUP BY + ORDER BY +
+        #     HAVING. Когда SQL ссылается на одну таблицу без алиаса, чужие
+        #     идентификаторы (не в схеме) — это галлюцинация.
+        sections: list[str] = []
+        for pat in (
+            r"\bselect\s+(.+?)\s+from\b",
+            r"\bwhere\b(.+?)(?:\bgroup\b|\border\b|\bhaving\b|\blimit\b|;|$)",
+            r"\bgroup\s+by\s+(.+?)(?:\border\b|\bhaving\b|\blimit\b|;|$)",
+            r"\border\s+by\s+(.+?)(?:\blimit\b|;|$)",
+            r"\bhaving\b(.+?)(?:\border\b|\blimit\b|;|$)",
+        ):
+            m = re.search(pat, sql_no_lit, re.I | re.S)
+            if m:
+                sections.append(m.group(1))
+
+        for section in sections:
+            section_clean = re.sub(r"\bas\s+\w+", " ", section, flags=re.I)
+            # вытащим alias.col паттерны и пропустим — они уже в шаге 2a
+            for alias_or_table, col in re.findall(r"\b([a-zA-Z_][\w]*)\.([a-zA-Z_][\w]*)\b",
+                                                  section_clean):
+                # помечаем уже обработанные dot-токены пробелами, чтобы не дублить
+                section_clean = section_clean.replace(f"{alias_or_table}.{col}", " ")
+
+            for tok in re.findall(r"\b[a-zA-Z_][\w]*\b", section_clean):
                 tl = tok.lower()
                 if tl in _SQL_KEYWORDS or tl == only_table or tl in aliases:
                     continue
-                if tl.isdigit() or "." in tok:    # числа и alias.col уже обработаны
+                if tl.isdigit():
                     continue
                 # подозреваем колонку только если она НЕ есть ни в одной реальной таблице
-                # (иначе это может быть колонка из другой таблицы через UNION/CTE)
+                # (иначе это может быть колонка чужой таблицы через UNION; пропустим — это редко)
                 if tl not in _ALL_COLUMN_NAMES:
                     bad.append((only_table, tok))
 

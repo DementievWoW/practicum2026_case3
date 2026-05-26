@@ -51,7 +51,21 @@ def _tokens(s: str) -> set[str]:
 
 
 class SchemaLinker:
-    """@brief Лексический schema-linker по русским описаниям таблиц/колонок."""
+    """@brief Schema-linker: лексический (по умолч.) ИЛИ семантический (bge-m3, опц.).
+
+    @details
+        Семантический ранкер активируется, когда HF_TOKEN задан в env:
+        bge-m3 даёт описание каждой таблицы (имя + comment + 6 значимых
+        column-comments) в 1024-мерное пространство, ранжирование — cosine.
+        Эмбеддинги таблиц считаются ЛЕНИВО и кэшируются на диск
+        (data/embeddings_cache.json). После первого прогрева стоимость =
+        1 HTTP-API на пользовательскую задачу.
+
+        На лексически прозрачных задачах семантика не сильно лучше Jaccard'а.
+        Преимущество — на абстрактных формулировках: «отчёт по рискам»
+        лексически не сопоставится с `scp_application` (заявка), а
+        семантически — да (риск ~ скоринг заявки).
+    """
 
     def __init__(self, catalog_path: str = _CATALOG):
         cat = json.load(open(catalog_path, encoding="utf-8"))["tables"]
@@ -59,22 +73,68 @@ class SchemaLinker:
         for t in cat:
             head = f"{t['name']} {t.get('comment') or ''}"
             body = " ".join(f"{c['name']} {c.get('comment') or ''}" for c in t["columns"])
+            # Текст для эмбеддинга: имя + comment + первые 6 значимых column-comments.
+            # Без всех 100+ колонок (для широких таблиц)— иначе вектор размывается.
+            col_comments = [c.get("comment") or "" for c in t["columns"]
+                            if (c.get("comment") or "").strip()
+                            and (c.get("comment") or "").lower() not in {"name", "id", "create date"}]
+            sem_text = f"{t['name']}. {t.get('comment') or ''}. " + " ".join(col_comments[:6])
             self.tables[t["name"]] = {
                 "comment": t.get("comment") or "",
                 "columns": t["columns"],
                 "fks": t.get("foreign_keys") or [],
-                "head_tok": _tokens(head),          # имя+комментарий таблицы (вес ×2)
+                "head_tok": _tokens(head),
                 "all_tok": _tokens(head + " " + body),
+                "sem_text": sem_text.strip(),
+                "sem_vec": None,                    # ленивая инициализация (см. _ensure_semantic)
             }
+        # embeddings-клиент: singleton. Если HF_TOKEN нет — available()==False, fallback лексика.
+        try:
+            from case3.llm.embeddings import get_embeddings_client
+            self._ec = get_embeddings_client()
+        except Exception:
+            self._ec = None
+        self._sem_ready = False
+
+    def _ensure_semantic(self) -> bool:
+        """@brief Прогреть эмбеддинги для всех 60 таблиц одним батчем. Idempotent.
+        Возвращает False, если HF_TOKEN не задан или эмбеддинги не считаются."""
+        if self._sem_ready:
+            return True
+        if not self._ec or not self._ec.available():
+            return False
+        texts = [self.tables[n]["sem_text"] for n in self.tables]
+        vecs = self._ec.embed_batch(texts)
+        if not any(v is not None for v in vecs):
+            return False
+        for n, v in zip(self.tables.keys(), vecs):
+            self.tables[n]["sem_vec"] = v
+        self._ec.save_cache()
+        self._sem_ready = True
+        return True
 
     def _score(self, qt: set[str], info: dict) -> int:
         return len(qt & info["all_tok"]) + 2 * len(qt & info["head_tok"])
 
-    def rank(self, task: str, k: int = 6) -> list[tuple[str, int]]:
-        """@brief top-K таблиц по релевантности (имя, score), score>0."""
+    def rank(self, task: str, k: int = 6) -> list[tuple[str, float]]:
+        """@brief top-K таблиц по релевантности (имя, score>0). Семантика → лексика."""
+        if self._ensure_semantic():
+            qv = self._ec.embed(task)
+            if qv is not None:
+                from case3.llm.embeddings import EmbeddingsClient
+                scored: list[tuple[str, float]] = []
+                for n, info in self.tables.items():
+                    tv = info["sem_vec"]
+                    if tv is None:
+                        continue
+                    s = EmbeddingsClient.cosine(qv, tv)
+                    if s > 0:
+                        scored.append((n, s))
+                return sorted(scored, key=lambda x: -x[1])[:k]
+        # Лексический fallback
         qt = _tokens(task)
-        scored = ((n, self._score(qt, i)) for n, i in self.tables.items())
-        return sorted((x for x in scored if x[1] > 0), key=lambda x: -x[1])[:k]
+        scored_lex = [(n, float(self._score(qt, i))) for n, i in self.tables.items()]
+        return sorted([x for x in scored_lex if x[1] > 0], key=lambda x: -x[1])[:k]
 
     def link_dict(self, task: str, k: int = 6, fk_closure: bool = True) -> dict[str, list[str]]:
         """@brief {таблица: [колонки]} для top-K (+ FK-замыкание на 1 хоп)."""
