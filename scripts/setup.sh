@@ -50,3 +50,6 @@ fi
 echo ""
 echo "Готово. Следующий шаг:"
 echo "  docker compose up -d --build"
+echo ""
+echo "Опц.: подключить трейсинг LLM-цепочек в Langfuse:"
+echo "  см. docs/langfuse.md (5 минут разово на UI: http://localhost:13001)"
