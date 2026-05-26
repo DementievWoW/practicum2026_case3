@@ -7,16 +7,23 @@ audit log, без исполнения на проде.
 ## Быстрый старт (всё в docker)
 
 ```bash
-# 1. секрет: положить ключ OpenRouter (или другого OpenAI-compatible API)
-cp .env.example .env             # отредактировать LLM_API_KEY и LANGFUSE_*
-grep '^LLM_API_KEY=' .env | sed 's/^LLM_API_KEY=//' > secrets/llm_api_key
+bash scripts/setup.sh            # создаст .env + secrets/ + сгенерит ключи
+docker compose up -d --build     # поднимет 6 сервисов
+```
 
-# 2. сгенерировать секреты Langfuse (если планируете трейсинг)
-echo "LANGFUSE_NEXTAUTH_SECRET=$(openssl rand -base64 32)" >> .env
-echo "LANGFUSE_SALT=$(openssl rand -base64 32)" >> .env
+После `setup.sh` без правок будет работать **MockLLM** (для демо без сети).
+Чтобы подключить реальную LLM (Qwen2.5-Coder через OpenRouter):
 
-# 3. поднять стек
-docker compose up -d --build
+```bash
+echo 'sk-or-v1-...' > secrets/llm_api_key   # ваш ключ → docker secret
+docker compose up -d                        # recreate app с реальным LLM
+```
+
+Проверка:
+
+```bash
+curl -s -X POST localhost:18000/audit -H 'Content-Type: application/json' \
+     -d '{"task":"Сколько кредитных договоров?"}' | python3 -m json.tool
 ```
 
 Сервисы (нестандартные хост-порты, чтобы не конфликтовать с другими стеками):
