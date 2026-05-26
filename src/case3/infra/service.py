@@ -204,22 +204,24 @@ _UI_HTML = """<!doctype html>
             height="720"></iframe>
   </div>
 
-  <!-- ─── Pane: Langfuse ──────────────────────────────────────────────────── -->
+  <!-- ─── Pane: Langfuse (без iframe — CSP frame-ancestors=none) ───────────── -->
   <div class="pane" id="pane-langfuse">
     <div class="card">
-      <div class="row" style="justify-content:space-between">
-        <div>
-          <div class="label">Langfuse — трейсы LLM-цепочек</div>
-          <small id="lf-hint" class="warn">после запуска аудита здесь появится прямая ссылка на trace</small>
-        </div>
+      <div class="label">Langfuse — трейсы LLM-цепочек</div>
+      <p style="color:var(--mut);font-size:13px;margin:8px 0">
+        Langfuse self-host блокирует встраивание через iframe (CSP frame-ancestors=none).
+        После прогона из таба «Аудит» здесь появится прямая ссылка на trace.
+      </p>
+      <div id="lf-hint" class="warn">пока трейсов нет — запусти любой аудит сначала</div>
+      <div class="row" style="margin-top:12px">
         <a href="http://localhost:13001/traces" target="_blank">
-          <button class="ghost">Открыть Langfuse →</button>
+          <button>Открыть список trace'ов →</button>
+        </a>
+        <a href="http://localhost:13001" target="_blank">
+          <button class="ghost">Главная Langfuse →</button>
         </a>
       </div>
     </div>
-    <iframe id="langfuse-frame"
-            src="http://localhost:13001/traces" height="720"
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
   </div>
 
   <div class="links">
@@ -341,7 +343,7 @@ async function sendStream() {
       if (done) break;
       buf += dec.decode(value, {stream:true});
       let nl;
-      while ((nl = buf.indexOf('\n\n')) !== -1) {
+      while ((nl = buf.indexOf('\\n\\n')) !== -1) {
         const chunk = buf.slice(0, nl);
         buf = buf.slice(nl + 2);
         if (!chunk.startsWith('data: ')) continue;
@@ -422,7 +424,7 @@ async function sendStream() {
   if (traceId) {
     $('#lf-hint').innerHTML = `последний trace: <a href="http://localhost:13001/trace/${traceId}" target="_blank">${traceId.slice(0,8)}</a>`;
     $('#lf-hint').className = 'ok';
-    $('#langfuse-frame').src = `http://localhost:13001/trace/${traceId}`;
+    const lf = $("#langfuse-frame"); if (lf) lf.src = `http://localhost:13001/trace/${traceId}`;
   }
   const runBtnEl = $('#run-sql');
   if (runBtnEl) runBtnEl.onclick = runApprovedSQL;
@@ -516,7 +518,7 @@ async function sendChat(answer /* optional — текстовый ответ ю�
     if (traceId) {
       $('#lf-hint').innerHTML = `последний trace: <a href="http://localhost:13001/trace/${traceId}" target="_blank">${traceId.slice(0,8)}</a>`;
       $('#lf-hint').className = 'ok';
-      $('#langfuse-frame').src = `http://localhost:13001/trace/${traceId}`;
+      const lf = $("#langfuse-frame"); if (lf) lf.src = `http://localhost:13001/trace/${traceId}`;
     }
     const runBtnEl = $('#run-sql');
     if (runBtnEl) runBtnEl.onclick = runApprovedSQL;
