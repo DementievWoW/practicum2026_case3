@@ -95,6 +95,10 @@ class LLMGenerator(SQLGenerator):
         "- R011 конкатенация ввода в SQL-литералы — параметризуй ($1).\n"
         "- R012/R013 EXECUTE с `||` или `format('...%s', var)` — используй "
         "`EXECUTE '...' USING $1` / `%L` для литералов, `%I` для идентификаторов.\n"
+        "- R014 DROP / TRUNCATE — NL→SQL не генерирует деструктивный DDL.\n"
+        "- R015 GRANT / REVOKE — NL→SQL не управляет доступом (это задача DBA).\n"
+        "- R016 SELECT из pg_catalog / information_schema / pg_authid / pg_shadow / "
+        "pg_user — не обращайся к системным каталогам.\n"
     )
 
     def _security_hints_block(self) -> str:

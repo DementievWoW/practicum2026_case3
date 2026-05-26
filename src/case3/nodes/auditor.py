@@ -198,22 +198,69 @@ def _rule_sensitive_columns(sql: str) -> list[Finding]:
     return out
 
 
+def _rule_ddl_destructive(sql: str) -> list[Finding]:
+    """@brief R014 — DROP/TRUNCATE: NL→SQL не должен генерировать деструктивный DDL."""
+    if re.search(r"\b(drop|truncate)\s+(table|schema|database|index)\b", sql, re.I):
+        op = "TRUNCATE" if re.search(r"\btruncate\b", sql, re.I) else "DROP"
+        return [Finding("R014-ddl-destructive", "DDL_DESTRUCTIVE", "critical", 10.0,
+                        f"{op} — безвозвратное удаление (NL→SQL не должен генерировать DDL)",
+                        ["CWE-1284", "CAPEC-176"])]
+    return []
+
+
+def _rule_dcl_grant(sql: str) -> list[Finding]:
+    """@brief R015 — GRANT/REVOKE: DCL не должен идти через NL-интерфейс пользователя."""
+    if re.search(r"\b(grant|revoke)\s+\w+.*?\b(to|from)\b", sql, re.I | re.S):
+        return [Finding("R015-dcl-leak", "DCL_LEAK", "critical", 10.0,
+                        "GRANT/REVOKE — DCL не должен идти через NL-интерфейс пользователя",
+                        ["CWE-732", "CWE-269"])]
+    return []
+
+
+def _rule_schema_introspect(sql: str) -> list[Finding]:
+    """@brief R016 — обращение к системным каталогам PG (раскрытие структуры/учёток)."""
+    if re.search(r"\bfrom\s+(pg_catalog\.|pg_shadow|pg_authid|pg_user|information_schema\.)",
+                 sql, re.I):
+        return [Finding("R016-schema-introspect", "SCHEMA_INTROSPECT", "high", 7.0,
+                        "Доступ к системным каталогам PG — раскрытие структуры/учёток",
+                        ["CWE-200", "CAPEC-545"])]
+    return []
+
+
 PHASE1_RULES = [
     _rule_select_star, _rule_dml_no_where, _rule_no_limit, _rule_slow_query,
     _rule_union, _rule_pg_sleep, _rule_security_definer, _rule_plpgsql_concat,
     _rule_injection_marker, _rule_sensitive_columns,
+    _rule_ddl_destructive, _rule_dcl_grant, _rule_schema_introspect,
 ]
 
 
+def _strip_sql_comments(sql: str) -> str:
+    """@brief Срезать SQL-комментарии (-- ... и /* ... */) — иначе bypass правил
+    типа `re.match(r"^delete", ...)`: модель прячет команду за комментарием.
+
+    Важно: вырезаем КОММЕНТАРИИ, а не строки. Делаем простой стрип на уровне
+    токенизации (полный SQL-парсер дороже — Phase 2 LLM-судья всё равно видит
+    исходник целиком и подхватит хитрые случаи)."""
+    s = re.sub(r"/\*.*?\*/", " ", sql, flags=re.S)        # блочный /* ... */
+    s = re.sub(r"--[^\n]*", " ", s)                       # построчный -- ...
+    return s.strip()
+
+
 def run_phase1(sql: str) -> list[Finding]:
-    """@brief Прогон всех детерминированных правил. @return list[Finding]."""
+    """@brief Прогон всех детерминированных правил. @return list[Finding].
+
+    SQL-комментарии срезаются перед проверкой — иначе генератор/атакующий
+    может обойти `re.match(r'\\s*delete\\b', ...)`, поставив комментарий перед
+    деструктивной командой."""
+    sql_clean = _strip_sql_comments(sql)
     findings: list[Finding] = []
     for rule in PHASE1_RULES:
-        findings.extend(rule(sql))
+        findings.extend(rule(sql_clean))
     # schema-grounded PII (по реальной схеме + COMMENT) — fail-safe
     try:
         from case3.audit.schema_sensitive import findings as _schema_findings
-        findings.extend(_schema_findings(sql))
+        findings.extend(_schema_findings(sql_clean))
     except Exception:
         pass
     return findings

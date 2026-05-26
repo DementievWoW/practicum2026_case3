@@ -98,6 +98,26 @@ KNOWLEDGE: dict[str, Knowledge] = {
         "Декартово произведение / leading-wildcard / функция на колонке убивают индексы.",
         "JOIN ... ON вместо запятой; sargable-предикаты; keyset вместо большого OFFSET.",
     ),
+    "DDL_DESTRUCTIVE": Knowledge(
+        "DDL_DESTRUCTIVE", "Деструктивный DDL (DROP/TRUNCATE)",
+        ["CWE-1284"], ["CAPEC-176"], "OWASP A04:2021-Insecure Design",
+        "DROP TABLE/SCHEMA/DATABASE и TRUNCATE безвозвратно удаляют данные.",
+        "NL→SQL не должен генерировать DDL. Только в migration-инструментах с code review.",
+    ),
+    "DCL_LEAK": Knowledge(
+        "DCL_LEAK", "Опасный DCL (GRANT/REVOKE)",
+        ["CWE-732", "CWE-269"], [], "OWASP A01:2021-Broken Access Control",
+        "GRANT ALL TO PUBLIC / REVOKE FROM owner — обход модели доступа.",
+        "DCL — задача администратора БД; NL→SQL пользователю это не делает.",
+    ),
+    "SCHEMA_INTROSPECT": Knowledge(
+        "SCHEMA_INTROSPECT", "Доступ к системным каталогам",
+        ["CWE-200"], ["CAPEC-545"], "OWASP A01:2021-Broken Access Control",
+        "SELECT из pg_catalog/information_schema/pg_authid/pg_shadow раскрывает "
+        "структуру БД, пользователей и потенциально хэши паролей.",
+        "Не возвращать запросы к pg_*/information_schema из NL-интерфейса для конечных "
+        "пользователей. Для админ-задач — отдельный канал и аудит.",
+    ),
 }
 
 
