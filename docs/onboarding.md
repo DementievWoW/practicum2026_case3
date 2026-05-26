@@ -10,11 +10,55 @@
 | Docker | контейнеры | 24+ | `docker --version` |
 | docker-compose | `docker compose ...` (plugin v2) | 2.20+ | `docker compose version` |
 | Python | для evaluator-скриптов на хосте | 3.10+ | `python3 --version` |
-| GNU make | команды `make up/check/...` | любой | `make --version` |
+| make | команды `make up/check/...` | любой | `make --version` |
 | git | клонировать репо | любой | `git --version` |
+| openssl | генерация Langfuse-секретов | любой | `openssl version` |
+| curl | smoke-test endpoints | любой | `curl --version` |
 
 Всё остальное (Postgres, FastAPI, Prometheus, Grafana, Langfuse, Qwen-API,
 HF Inference, pglast, faker) — в docker-контейнерах, ставить не нужно.
+
+### Platform-specific
+
+#### 🍎 macOS
+
+```bash
+# Docker Desktop: https://www.docker.com/products/docker-desktop/
+brew install make python@3.11      # make и git обычно уже есть
+```
+
+Особенности:
+- `make` доступен из коробки (Xcode CLT). Если ругается — `xcode-select --install`.
+- `python` без `3` может быть Anaconda — наши скрипты ищут `python3`/`python` оба.
+- `sed` — BSD (отличается от Linux GNU). В наших скриптах используется
+  кросс-совместимый синтаксис `sed -i.bak '...'` + `rm .bak` — работает.
+
+#### 🐧 Linux
+
+Всё из коробки в любом современном дистрибутиве. Docker — следуй инструкции
+[docs.docker.com/engine/install/](https://docs.docker.com/engine/install/).
+Не забудь `sudo usermod -aG docker $USER` + перелогин, чтобы запускать без `sudo`.
+
+#### 🪟 Windows
+
+**Только через WSL2.** Cmd / PowerShell не поддерживаются (нет
+`make` / `bash` / `openssl`, GitBash тоже частично не подходит).
+
+1. Поставить **Docker Desktop** + включить WSL2-backend в настройках.
+2. Поставить **WSL2 Ubuntu**: `wsl --install -d Ubuntu` в PowerShell от админа.
+3. Перезагрузка → запустить Ubuntu → создать пользователя.
+4. В Ubuntu-терминале:
+   ```bash
+   sudo apt update && sudo apt install -y make python3 python3-pip git curl openssl
+   ```
+5. Клонировать репо **внутрь WSL** (НЕ в `/mnt/c/...` — там Docker работает в 5 раз медленнее):
+   ```bash
+   cd ~ && git clone <repo> sqlsec && cd sqlsec
+   ```
+6. Дальше — как Linux.
+
+Docker Desktop с WSL2-backend автоматически шарит сокет — `docker`/`docker compose`
+работают и из Ubuntu, и из Windows-cmd одинаково.
 
 ## 1. Клонируем и поднимаем
 
@@ -165,6 +209,39 @@ make up
 Контейнер `app` собран один раз. После правок кода:
 ```bash
 make restart     # пересоберёт только app
+```
+
+### macOS: `make: command not found`
+
+Поставь Xcode Command Line Tools:
+```bash
+xcode-select --install
+```
+
+### macOS: всё медленно
+
+Открой Docker Desktop → Settings → Resources → выдай **6+ ГБ RAM** и **4+ CPU**.
+По умолчанию 2 ГБ маловато для Postgres + Langfuse + 4 других контейнера.
+
+### Windows: `make: command not found` в Git Bash
+
+GitBash не подходит — используй WSL2 (см. раздел Platform-specific).
+В WSL2-Ubuntu:
+```bash
+sudo apt install make
+```
+
+### Windows / macOS: «cannot connect to Docker daemon»
+
+Запусти Docker Desktop из меню Пуск/Launchpad — он должен крутиться в
+системном трее. Без запущенного Desktop `docker ps` не работает.
+
+### `make check` всё зелёное, но `/audit` тормозит (>10 сек)
+
+Это OpenRouter — реальный LLM-вызов через интернет. Нормально 1.5-3 сек
+на запрос. Если хочется быстрее для демо без сети:
+```bash
+: > secrets/llm_api_key && make restart   # переключение на MockLLM
 ```
 
 ## 8. Что прочитать дальше

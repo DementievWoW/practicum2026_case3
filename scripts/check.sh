@@ -14,6 +14,17 @@
 set -u
 cd "$(dirname "$0")/.."
 
+# python: на macOS может быть только `python` (без `3`); на Windows-WSL — `python3`.
+# Linux обычно тоже `python3`. Ищем что есть.
+if command -v python3 >/dev/null 2>&1; then
+  PY=python3
+elif command -v python >/dev/null 2>&1; then
+  PY=python
+else
+  echo "❌ ни python3 ни python не найдены. Поставь Python 3.10+." >&2
+  exit 2
+fi
+
 FAILED=0
 PASS="\033[32m✔\033[0m"
 FAIL="\033[31m✗\033[0m"
@@ -65,8 +76,8 @@ if [ -z "$resp" ]; then
   step "$FAIL" "POST /audit не ответил"
   FAILED=$((FAILED+1))
 else
-  approved="$(echo "$resp" | python3 -c "import json,sys; print(json.load(sys.stdin)['approved'])" 2>/dev/null || echo "?")"
-  sql="$(echo "$resp" | python3 -c "import json,sys; print(json.load(sys.stdin)['final_sql'][:80])" 2>/dev/null || echo "?")"
+  approved="$(echo "$resp" | $PY -c "import json,sys; print(json.load(sys.stdin)['approved'])" 2>/dev/null || echo "?")"
+  sql="$(echo "$resp" | $PY -c "import json,sys; print(json.load(sys.stdin)['final_sql'][:80])" 2>/dev/null || echo "?")"
   if [ "$approved" = "True" ] || [ "$approved" = "False" ]; then
     step "$PASS" "/audit ответил: approved=$approved"
     step "$PASS" "SQL: ${sql}"
@@ -81,7 +92,7 @@ echo ""
 echo "── Prometheus → app:9100 ──"
 runs="$(curl -fsS 'http://localhost:19090/api/v1/query' \
         --data-urlencode 'query=sum(sqlsec_runs_total)' --max-time 10 2>/dev/null \
-        | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['data']['result'][0]['value'][1] if d['data']['result'] else 0)" 2>/dev/null || echo "?")"
+        | $PY -c "import json,sys; d=json.load(sys.stdin); print(d['data']['result'][0]['value'][1] if d['data']['result'] else 0)" 2>/dev/null || echo "?")"
 if [ "$runs" != "?" ] && [ "$runs" != "0" ]; then
   step "$PASS" "sqlsec_runs_total = $runs (метрики снимаются)"
 else
