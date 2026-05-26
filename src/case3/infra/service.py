@@ -22,14 +22,41 @@ from __future__ import annotations
 
 import json as _json
 import os
+import secrets
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field
 
+from case3.infra import events as ev
 from case3.infra import metrics as m
 from case3.infra.runtime import run_instrumented
+
+
+# ── auth: identity (X-User для всех) + Basic для админки ────────────────────
+# Identity — никакой security, просто чтобы знать «кто Вася, кто Маша».
+# Админка защищена единым ADMIN_USER / ADMIN_PASSWORD из env (compose).
+def get_user(x_user: str | None = Header(default=None)) -> str:
+    """@brief Идентификация по X-User header. anonymous если не задан."""
+    return (x_user or "").strip()[:60] or "anonymous"
+
+
+_admin_basic = HTTPBasic()
+
+
+def require_admin(creds: HTTPBasicCredentials = Depends(_admin_basic)) -> str:
+    """@brief HTTP Basic — для /admin/* endpoints. Креды из env."""
+    expected_user = os.environ.get("ADMIN_USER", "admin")
+    expected_pwd = os.environ.get("ADMIN_PASSWORD", "admin")
+    ok_u = secrets.compare_digest(creds.username, expected_user)
+    ok_p = secrets.compare_digest(creds.password, expected_pwd)
+    if not (ok_u and ok_p):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="invalid admin credentials",
+                            headers={"WWW-Authenticate": "Basic"})
+    return creds.username
 
 # ─── метрики /metrics на :9100 поднимаются один раз при импорте модуля ──────
 # (в multi-worker uvicorn каждый воркер поднимет свой порт → запускаем
@@ -139,6 +166,32 @@ _UI_HTML = """<!doctype html>
   .answer-row { display:flex; gap:6px; margin-top:8px }
   .answer-row input { flex:1; background:#0d1117; color:var(--fg); border:1px solid #30363d;
                        border-radius:6px; padding:6px 10px; font:13px ui-monospace,Menlo,monospace }
+  /* user widget */
+  .user-bar { position:fixed; top:8px; right:12px; background:#161b22;
+              border:1px solid #30363d; border-radius:18px; padding:4px 10px 4px 4px;
+              display:flex; align-items:center; gap:6px; font-size:12px; z-index:100 }
+  .avatar { width:24px; height:24px; border-radius:50%; background:var(--accent);
+            color:#fff; display:flex; align-items:center; justify-content:center;
+            font-weight:700; font-size:11px }
+  .user-bar a { color:var(--mut); text-decoration:none; cursor:pointer }
+  .user-bar a:hover { color:var(--fg) }
+  /* modal */
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:200;
+              display:none; align-items:center; justify-content:center }
+  .modal-bg.active { display:flex }
+  .modal { background:var(--card); border:1px solid #30363d; border-radius:8px;
+           padding:20px; min-width:340px; max-width:480px }
+  .modal h3 { margin:0 0 8px; font-size:16px }
+  .modal p { margin:0 0 12px; color:var(--mut); font-size:13px }
+  .modal input { width:100%; padding:8px 10px; background:#0d1117; color:var(--fg);
+                 border:1px solid #30363d; border-radius:6px; font:13px Menlo,monospace }
+  /* admin */
+  .stat-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:12px }
+  .stat-num { font-size:32px; font-weight:700; color:var(--accent) }
+  .stat-lbl { color:var(--mut); font-size:12px; text-transform:uppercase; letter-spacing:.5px }
+  table.tt { width:100%; border-collapse:collapse; font-size:12px }
+  table.tt th, table.tt td { padding:6px 8px; border-bottom:1px solid #21262d; text-align:left }
+  table.tt th { color:var(--mut); font-weight:600 }
   /* feedback */
   .fb-btn { background:#21262d; border:1px solid #30363d; color:var(--fg);
             padding:8px 14px; border-radius:6px; cursor:pointer; font-size:14px;
@@ -170,10 +223,31 @@ _UI_HTML = """<!doctype html>
       Артефакт: SQL + audit log (без исполнения на проде). Кнопка «Выполнить»
       на этой странице — ТОЛЬКО для демо на seed-БД.</div>
 
+  <!-- user-bar: identity справа сверху -->
+  <div class="user-bar" id="user-bar" style="display:none">
+    <div class="avatar" id="user-avatar">?</div>
+    <span id="user-name">…</span>
+    <a id="user-change">сменить</a>
+  </div>
+
+  <!-- модалка ввода имени -->
+  <div class="modal-bg" id="user-modal">
+    <div class="modal">
+      <h3>Как вас зовут?</h3>
+      <p>Просто имя — оно прикрепляется к запросам для статистики.
+         Это не пароль, не делает запросы безопаснее. Можно сменить позже.</p>
+      <input id="user-input" type="text" placeholder="напр.: vasya" autocomplete="off">
+      <div class="row" style="justify-content:flex-end;margin-top:12px">
+        <button id="user-save">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
   <div class="tabs">
     <div class="tab active" data-pane="audit">Аудит</div>
     <div class="tab" data-pane="grafana">Grafana</div>
     <div class="tab" data-pane="langfuse">Langfuse</div>
+    <div class="tab" data-pane="admin">Админка</div>
   </div>
 
   <!-- ─── Pane: Аудит (chat-стиль) ───────────────────────────────────────── -->
@@ -235,6 +309,25 @@ _UI_HTML = """<!doctype html>
     </div>
   </div>
 
+  <!-- ─── Pane: Админка ──────────────────────────────────────────────────── -->
+  <div class="pane" id="pane-admin">
+    <div class="card" id="admin-login-card">
+      <div class="label">Админ-доступ нужен для статистики и выгрузки</div>
+      <p style="color:var(--mut);font-size:13px;margin:8px 0">
+        HTTP Basic Auth. Креды — из <code>ADMIN_USER</code> / <code>ADMIN_PASSWORD</code>
+        в .env (по умолч. <code>admin</code>/<code>admin</code> для локального демо).
+      </p>
+      <div class="row" style="margin-top:8px">
+        <input type="text" id="admin-user" placeholder="admin" style="background:#0d1117;color:var(--fg);border:1px solid #30363d;border-radius:6px;padding:6px 10px;font:13px Menlo,monospace">
+        <input type="password" id="admin-pwd" placeholder="••••••" style="background:#0d1117;color:var(--fg);border:1px solid #30363d;border-radius:6px;padding:6px 10px;font:13px Menlo,monospace">
+        <button id="admin-login">Войти</button>
+        <button class="ghost" id="admin-logout" style="display:none">Выйти</button>
+      </div>
+      <div id="admin-err" class="err" style="display:none;margin-top:8px"></div>
+    </div>
+    <div id="admin-content" style="display:none"></div>
+  </div>
+
   <div class="links">
     <a href="/docs">/docs (OpenAPI)</a>
     <a href="/metrics">/metrics</a>
@@ -263,6 +356,48 @@ window.addEventListener('error', e => {
 const $ = s => document.querySelector(s);
 const $$ = s => document.querySelectorAll(s);
 const out = $('#out');
+
+// ── identity (X-User для всех запросов) ──
+let _user = localStorage.getItem('sqlsec_user') || '';
+let _adminAuth = sessionStorage.getItem('sqlsec_admin_auth') || '';
+
+function showUserBar() {
+  const bar = $('#user-bar');
+  if (!_user) { bar.style.display = 'none'; return; }
+  bar.style.display = '';
+  $('#user-name').textContent = _user;
+  $('#user-avatar').textContent = (_user[0] || '?').toUpperCase();
+}
+function openUserModal() {
+  $('#user-modal').classList.add('active');
+  $('#user-input').value = _user || '';
+  setTimeout(() => $('#user-input').focus(), 50);
+}
+function saveUser() {
+  const v = $('#user-input').value.trim();
+  if (!v) return;
+  _user = v.slice(0, 60);
+  localStorage.setItem('sqlsec_user', _user);
+  showUserBar();
+  $('#user-modal').classList.remove('active');
+}
+$('#user-save').onclick = saveUser;
+$('#user-input').addEventListener('keydown', e => { if (e.key === 'Enter') saveUser(); });
+$('#user-change').onclick = openUserModal;
+// при первом заходе — модалка
+if (!_user) openUserModal(); else showUserBar();
+
+// Обёртка над fetch: добавляет X-User
+const _origFetch = window.fetch.bind(window);
+window.fetch = (url, opts = {}) => {
+  const h = new Headers(opts.headers || {});
+  if (_user) h.set('X-User', _user);
+  // для /admin/* — Basic auth из sessionStorage
+  if (typeof url === 'string' && url.startsWith('/admin') && _adminAuth) {
+    h.set('Authorization', 'Basic ' + _adminAuth);
+  }
+  return _origFetch(url, {...opts, headers: h});
+};
 
 // ── tabs ──
 $$('.tab').forEach(t => {
@@ -567,6 +702,113 @@ if (_stream_btn) _stream_btn.onclick = () => {
   sendStream();
 };
 
+// ── Админка ──
+function renderAdminContent(d) {
+  const users = (d.users || []).slice(0, 20).map(u => `
+    <tr>
+      <td><b>${esc(u.name)}</b></td>
+      <td>${u.requests}</td>
+      <td><span class="ok">${u.approved}</span> / <span class="err">${u.rejected}</span></td>
+      <td>${(u.top_tables || []).map(t => `${esc(t[0])} (${t[1]})`).join(', ') || '—'}</td>
+      <td>${(u.top_vulns || []).map(v => `${esc(v[0])} (${v[1]})`).join(', ') || '—'}</td>
+    </tr>
+  `).join('');
+  const tablesHtml = (d.top_tables || []).map(t => `
+    <tr><td>${esc(t[0])}</td><td>${t[1]}</td></tr>`).join('');
+  const vulnsHtml = (d.top_vulns || []).map(v => `
+    <tr><td>${esc(v[0])}</td><td>${v[1]}</td></tr>`).join('');
+  const lastHtml = (d.last_events || []).map(e => `
+    <tr>
+      <td><small>${esc(e.ts)}</small></td>
+      <td><b>${esc(e.user || '?')}</b></td>
+      <td>${esc(e.endpoint)}</td>
+      <td><span class="ok">${e.approved === 'true' ? '✓' : e.approved === 'false' ? '✗' : ''}</span> ${esc((e.task||'').slice(0,60))}</td>
+    </tr>`).join('');
+  return `
+    <div class="card stat-grid">
+      <div><div class="stat-num">${d.total_events}</div><div class="stat-lbl">всего событий</div></div>
+      <div><div class="stat-num ok">${d.approved}</div><div class="stat-lbl">approved</div></div>
+      <div><div class="stat-num err">${d.rejected}</div><div class="stat-lbl">rejected</div></div>
+      <div><div class="stat-num">${(d.users || []).length}</div><div class="stat-lbl">пользователей</div></div>
+    </div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div class="label" style="margin:0">events.csv</div>
+        <a href="/admin/export.csv" id="admin-dl" target="_blank">
+          <button>⤓ Скачать CSV</button>
+        </a>
+      </div>
+    </div>
+    <div class="card">
+      <div class="label">По пользователям</div>
+      <table class="tt">
+        <tr><th>user</th><th>запросов</th><th>approved/rejected</th><th>топ таблиц</th><th>топ vuln-классов</th></tr>
+        ${users || '<tr><td colspan="5">пока пусто</td></tr>'}
+      </table>
+    </div>
+    <div class="card stat-grid">
+      <div>
+        <div class="label">Топ таблиц</div>
+        <table class="tt"><tr><th>table</th><th>обращений</th></tr>${tablesHtml || '<tr><td colspan="2">—</td></tr>'}</table>
+      </div>
+      <div>
+        <div class="label">Топ vuln-классов</div>
+        <table class="tt"><tr><th>class</th><th>находок</th></tr>${vulnsHtml || '<tr><td colspan="2">—</td></tr>'}</table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="label">Последние 30 событий</div>
+      <table class="tt">
+        <tr><th>ts</th><th>user</th><th>endpoint</th><th>task</th></tr>
+        ${lastHtml || '<tr><td colspan="4">—</td></tr>'}
+      </table>
+    </div>`;
+}
+
+async function adminLoadStats() {
+  const r = await fetch('/admin/stats');
+  if (r.status === 401) {
+    sessionStorage.removeItem('sqlsec_admin_auth');
+    _adminAuth = '';
+    $('#admin-login-card').style.display = '';
+    $('#admin-content').style.display = 'none';
+    $('#admin-err').style.display = 'block';
+    $('#admin-err').textContent = 'unauthorized — введите креды';
+    return;
+  }
+  const d = await r.json();
+  $('#admin-content').innerHTML = renderAdminContent(d);
+  $('#admin-content').style.display = 'block';
+  $('#admin-login-card').style.display = 'none';
+  $('#admin-logout').style.display = '';
+}
+
+$('#admin-login').onclick = async () => {
+  const u = $('#admin-user').value.trim();
+  const p = $('#admin-pwd').value;
+  if (!u || !p) return;
+  _adminAuth = btoa(u + ':' + p);
+  sessionStorage.setItem('sqlsec_admin_auth', _adminAuth);
+  $('#admin-err').style.display = 'none';
+  await adminLoadStats();
+};
+$('#admin-logout').onclick = () => {
+  sessionStorage.removeItem('sqlsec_admin_auth');
+  _adminAuth = '';
+  $('#admin-content').style.display = 'none';
+  $('#admin-login-card').style.display = '';
+  $('#admin-logout').style.display = 'none';
+};
+
+// При клике на таб «Админка» — попытка автозагрузки если уже залогинены
+document.querySelectorAll('.tab').forEach(t => {
+  if (t.dataset.pane === 'admin') {
+    t.addEventListener('click', () => {
+      if (_adminAuth) adminLoadStats();
+    });
+  }
+});
+
 // ── feedback (👍/👎 + комментарий) ──
 function renderFeedback(d) {
   return `
@@ -692,7 +934,7 @@ def metrics_text() -> Any:
 
 
 @app.post("/audit", response_model=AuditResponse)
-def audit(req: AuditRequest) -> AuditResponse:
+def audit(req: AuditRequest, user: str = Depends(get_user)) -> AuditResponse:
     """
     @brief Главный endpoint: NL-задача → (SQL + audit_log).
     @details
@@ -713,6 +955,12 @@ def audit(req: AuditRequest) -> AuditResponse:
                      description=v.description, recommendation=v.recommendation)
              for v in (last_audit.vulnerabilities if last_audit else [])]
 
+    ev.log_event(
+        user=user, endpoint="/audit", task=req.task, sql=res.final_sql,
+        approved=res.approved, iterations=res.iterations_used,
+        vuln_classes=[v.vuln_class for v in vulns],
+        trace_id=res.metadata.get("trace_id"),
+    )
     return AuditResponse(
         final_sql=res.final_sql,
         approved=res.approved,
@@ -722,9 +970,6 @@ def audit(req: AuditRequest) -> AuditResponse:
         audit_log=res.audit_log,
         metadata=res.metadata,
     )
-
-
-# ─── /chat: multi-turn с clarification ──────────────────────────────────────
 # Stateless: UI шлёт всю историю каждый раз. Сервер либо возвращает clarify
 # (question + options), либо запускает полный pipeline (run_instrumented).
 # До MAX_CLARIFY_ROUNDS=2 уточнений; на третьем — force_sql.
@@ -802,7 +1047,7 @@ def _persist_clarification(task: str, history: list[ChatTurn],
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(req: ChatRequest) -> ChatResponse:
+def chat(req: ChatRequest, user: str = Depends(get_user)) -> ChatResponse:
     """@brief Multi-turn с clarification. Stateless (history от UI каждый раз)."""
     # 1) NL-валидация — только на первом ходу (history пустой)
     nl_warnings: list[NLWarningOut] = []
@@ -869,6 +1114,12 @@ def chat(req: ChatRequest) -> ChatResponse:
     if req.history:
         _persist_clarification(req.task, req.history, res.final_sql, res.approved)
 
+    ev.log_event(
+        user=user, endpoint="/chat", task=req.task, sql=res.final_sql,
+        approved=res.approved, iterations=res.iterations_used,
+        vuln_classes=[v.vuln_class for v in vulns],
+        trace_id=res.metadata.get("trace_id"),
+    )
     return ChatResponse(
         type="sql",
         final_sql=res.final_sql,
@@ -893,7 +1144,7 @@ def chat(req: ChatRequest) -> ChatResponse:
 # event loop FastAPI не блокируется и SSE-чанки уходят в браузер по мере
 # появления.
 @app.post("/chat/stream")
-async def chat_stream(req: ChatRequest):
+async def chat_stream(req: ChatRequest, user: str = Depends(get_user)):
     """@brief SSE-стрим этапов pipeline'а — для 'thinking' UI."""
     import asyncio
 
@@ -919,14 +1170,21 @@ async def chat_stream(req: ChatRequest):
     q: "asyncio.Queue[dict]" = asyncio.Queue()
     SENTINEL = object()
 
-    def emit_threadsafe(ev: dict) -> None:
+    def emit_threadsafe(event: dict) -> None:
         # вызывается из worker-потока pipeline; шлём в event-loop коректно
-        loop.call_soon_threadsafe(q.put_nowait, ev)
+        loop.call_soon_threadsafe(q.put_nowait, event)
 
     def worker_blocking() -> None:
         try:
             res = run_instrumented(final_task, on_event=emit_threadsafe)
             last_audit = res.iterations_log[-1].audit_result if res.iterations_log else None
+            vcs = [v.vuln_class for v in (last_audit.vulnerabilities if last_audit else [])]
+            ev.log_event(
+                user=user, endpoint="/chat/stream", task=req.task,
+                sql=res.final_sql, approved=res.approved,
+                iterations=res.iterations_used, vuln_classes=vcs,
+                trace_id=res.metadata.get("trace_id"),
+            )
             emit_threadsafe({
                 "event": "final",
                 "approved": res.approved,
@@ -1037,10 +1295,16 @@ def _sync_langfuse_score(req: FeedbackRequest) -> bool:
 
 
 @app.post("/feedback", response_model=FeedbackResponse)
-def feedback(req: FeedbackRequest) -> FeedbackResponse:
+def feedback(req: FeedbackRequest, user: str = Depends(get_user)) -> FeedbackResponse:
     """@brief Оценка финального SQL пользователем (для RLHF/обучения и Langfuse UI)."""
     _persist_feedback(req)
     synced = _sync_langfuse_score(req)
+    ev.log_event(
+        user=user, endpoint="/feedback", task=req.task, sql=req.final_sql or "",
+        approved=req.approved, iterations=req.iterations_used,
+        rating=req.rating, comment=req.comment,
+        trace_id=req.trace_id,
+    )
     return FeedbackResponse(ok=True, langfuse_synced=synced)
 
 
@@ -1079,7 +1343,7 @@ def _is_safe_select(sql: str) -> bool:
 
 
 @app.post("/run-sql", response_model=RunSQLResponse)
-def run_sql(req: RunSQLRequest) -> RunSQLResponse:
+def run_sql(req: RunSQLRequest, user: str = Depends(get_user)) -> RunSQLResponse:
     """@brief Выполнить SQL на demo_db (только read-only)."""
     import time
     if not _is_safe_select(req.sql):
@@ -1128,6 +1392,8 @@ def run_sql(req: RunSQLRequest) -> RunSQLResponse:
             return v
         return str(v)
     out_rows = [[cell(c) for c in r] for r in rows]
+    ev.log_event(user=user, endpoint="/run-sql", task="", sql=req.sql,
+                 approved=True, iterations=None)
     return RunSQLResponse(
         columns=cols,
         rows=out_rows,
@@ -1135,3 +1401,65 @@ def run_sql(req: RunSQLRequest) -> RunSQLResponse:
         truncated=truncated,
         elapsed_ms=(time.perf_counter() - t0) * 1000,
     )
+
+# ─── /admin/* — HTTP Basic, статистика и выгрузка CSV ───────────────────────
+@app.get("/admin/stats")
+def admin_stats(_u: str = Depends(require_admin)) -> dict:
+    """@brief Агрегаты по data/events.csv (для админ-дашборда)."""
+    rows = ev.read_events()
+    by_user: dict[str, dict] = {}
+    by_table: dict[str, int] = {}
+    by_vuln: dict[str, int] = {}
+    approved_n = rejected_n = 0
+    last_events: list[dict] = []
+
+    for r in rows[-2000:]:                          # ограничиваем для скорости
+        u = r.get("user") or "anonymous"
+        bu = by_user.setdefault(u, {"requests": 0, "approved": 0, "rejected": 0,
+                                    "tables": {}, "vulns": {}})
+        bu["requests"] += 1
+        if r.get("approved") == "true":
+            bu["approved"] += 1
+            approved_n += 1
+        elif r.get("approved") == "false":
+            bu["rejected"] += 1
+            rejected_n += 1
+        for t in (r.get("tables") or "").split(","):
+            t = t.strip()
+            if not t:
+                continue
+            by_table[t] = by_table.get(t, 0) + 1
+            bu["tables"][t] = bu["tables"].get(t, 0) + 1
+        for vc in (r.get("vuln_classes") or "").split(","):
+            vc = vc.strip()
+            if not vc:
+                continue
+            by_vuln[vc] = by_vuln.get(vc, 0) + 1
+            bu["vulns"][vc] = bu["vulns"].get(vc, 0) + 1
+
+    last_events = list(reversed(rows[-30:]))        # последние 30 для preview
+
+    return {
+        "total_events": len(rows),
+        "approved": approved_n,
+        "rejected": rejected_n,
+        "users": [
+            {"name": u, "requests": d["requests"],
+             "approved": d["approved"], "rejected": d["rejected"],
+             "top_tables": sorted(d["tables"].items(), key=lambda x: -x[1])[:5],
+             "top_vulns":  sorted(d["vulns"].items(),  key=lambda x: -x[1])[:5]}
+            for u, d in sorted(by_user.items(), key=lambda x: -x[1]["requests"])
+        ],
+        "top_tables": sorted(by_table.items(), key=lambda x: -x[1])[:15],
+        "top_vulns":  sorted(by_vuln.items(),  key=lambda x: -x[1])[:15],
+        "last_events": last_events,
+    }
+
+
+@app.get("/admin/export.csv")
+def admin_export(_u: str = Depends(require_admin)):
+    """@brief Скачать data/events.csv (сырой лог)."""
+    path = ev.csv_path()
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="events.csv пуст — ещё не было запросов")
+    return FileResponse(path, media_type="text/csv", filename="events.csv")

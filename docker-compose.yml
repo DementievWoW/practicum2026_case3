@@ -97,6 +97,10 @@ services:
       # в SchemaLinker/FewShotStore. Без токена — graceful fallback на лексику.
       HF_TOKEN: ${HF_TOKEN:-}
       HF_EMBEDDING_MODEL: ${HF_EMBEDDING_MODEL:-BAAI/bge-m3}
+      # Админка /admin/* — HTTP Basic Auth. Креды для локального демо.
+      # ВНИМАНИЕ: для прода положите свой пароль в .env.
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
     volumes:
       # Bind-mount data/ для записи clarifications.jsonl и кэша embeddings.
       # Имена файлов фиксированы в коде (см. service.py::_CLARIF_LOG,

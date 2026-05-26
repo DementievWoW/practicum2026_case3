@@ -43,3 +43,4 @@ secrets/
 Thumbs.db
 data/clarifications.jsonl
 data/feedback.jsonl
+data/events.csv
