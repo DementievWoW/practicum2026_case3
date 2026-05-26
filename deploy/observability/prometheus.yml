@@ -1,4 +1,7 @@
-# Prometheus скрейпит /metrics приложения (заглушка на :9100 хоста).
+# Prometheus в compose-стеке скрейпит /metrics приложения по DNS-имени `app`
+# (внутренняя сеть compose). Старый таргет host.docker.internal:9100 оставлен
+# в качестве запасного — пригодится, если кто-то поднимет приложение на хосте,
+# а только observability в docker (старая инструкция в README).
 global:
   scrape_interval: 5s
   evaluation_interval: 5s
@@ -6,4 +9,7 @@ global:
 scrape_configs:
   - job_name: sqlsec-app
     static_configs:
-      - targets: ["host.docker.internal:9100"]
+      - targets: ["app:9100"]                # основной таргет — контейнер app
+        labels: { source: "container" }
+      - targets: ["host.docker.internal:9100"]  # fallback для запусков без app в compose
+        labels: { source: "host" }

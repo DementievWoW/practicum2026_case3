@@ -1,0 +1,41 @@
+# Build context: только то, что нужно образу. Без этого `docker build` тянет
+# .git и notebooks (десятки МБ — ломает кэш слоёв на каждом коммите).
+.git
+.gitignore
+.gitattributes
+.github
+
+# секреты и env — никогда не в образ
+.env
+.env.*
+secrets/
+*.key
+*.secret
+
+# python-кэш
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# редакторы / IDE
+.vscode
+.idea
+*.swp
+
+# артефакты исследования — в образ не идут
+notebooks/
+research/
+docs/
+problems/
+simulations/
+take1
+tusk
+case_3.txt
+
+# вспомогательные скрипты не нужны в prod-образе (seeder использует scripts/ отдельно)
+# Dockerfile корня берёт только src/ + data/ + baseline1.py + requirements.txt

@@ -1,31 +1,30 @@
-# Наблюдаемость (заглушка) · Участник 4
+# Наблюдаемость · Участник 4
 
-Стек наблюдаемости MVP на заглушках: приложение отдаёт метрики, Prometheus их
-скрейпит, Grafana рисует дашборд. Всё работает локально, без внешних сервисов.
+Стек наблюдаемости: приложение отдаёт метрики, Prometheus их скрейпит,
+Grafana рисует дашборд, Langfuse v2 пишет трейсы LLM-цепочек. Всё локально,
+без внешних сервисов.
 
-> Это **заглушки боевых интерфейсов**:
-> - метрики — на stdlib (`src/case3/infra/metrics.py`), реальная версия `prometheus_client`;
-> - трейсинг — `StubTracer` (`src/case3/infra/tracing.py`), реальная версия `langfuse` SDK;
-> - БД-песочница — `StubDatabase` (`src/case3/infra/db.py`), реальная версия `psycopg`.
->
-> Grafana и Prometheus — это уже настоящие образы; «заглушечность» в том, что
-> данные им поставляет мок-приложение.
+> История:
+> - метрики — `src/case3/infra/metrics.py` (stdlib-реестр; drop-in под `prometheus_client`);
+> - трейсинг — `src/case3/infra/tracing.py` (StubTracer → Langfuse v2 в compose);
+> - БД-песочница — `src/case3/infra/db.py` (Stub → реальная Postgres из compose).
 
-## Запуск
+## Запуск (в составе общего стека)
+
+Compose-файл лежит в корне репозитория — там же `.env` рядом, поэтому:
 
 ```bash
-# 1. поднять приложение с /metrics и прогнать несколько задач
-python -m case3.infra.runtime          # /metrics на :9100
-
-# 2. в другом терминале — стек наблюдаемости
-cd deploy/observability
-docker compose up
+# из корня репозитория
+docker compose up -d           # поднимет всё: db + seeder + app + prom + grafana + langfuse
+docker compose ps              # статус сервисов
 ```
 
-Открыть:
-- **Grafana** — http://localhost:3000 (`admin` / `admin`), дашборд **«SQL Security»** (папка General);
-- **Prometheus** — http://localhost:9090 (таргет `sqlsec-app` должен быть `UP`);
-- **/metrics** — http://localhost:9100/metrics (сырой текст).
+Открыть (порты нестандартные — чтобы не конфликтовать с другими стеками):
+- **FastAPI**     — http://localhost:18000/healthz, POST /audit `{"task":"..."}`
+- **/metrics**    — http://localhost:19100/metrics
+- **Prometheus** — http://localhost:19090 (таргет `sqlsec-app` должен быть `UP`)
+- **Grafana**    — http://localhost:13000 (admin/admin), дашборд «SQL Security»
+- **Langfuse**   — http://localhost:13001 (логин из `.env`)
 
 ## Метрики приложения
 
@@ -37,12 +36,19 @@ docker compose up
 | `sqlsec_last_risk` | gauge | итоговый risk последнего прогона (порог 4.0) |
 | `sqlsec_findings_total{vuln_class}` | counter | найдено уязвимостей по классам |
 
-Источник метрик — `src/case3/infra/metrics.py`, пишет их `infra/runtime.run_instrumented()`.
+Источник — `src/case3/infra/metrics.py`, пишет их `infra/runtime.run_instrumented()`,
+которая обёрнута вокруг `pipeline.run_pipeline()` (контракт baseline не трогаем).
 
-## Что меняется при переходе на прод
-- `StubTracer()` → `Langfuse(public_key=..., secret_key=..., host=...)`;
-- stdlib-реестр метрик → `prometheus_client` (имена метрик те же);
-- `StubDatabase()` → `psycopg`-коннект к Postgres-песочнице;
-- `host.docker.internal:9100` в `prometheus.yml` → реальный адрес/сервис приложения.
+## Только наблюдаемость (без приложения в compose)
 
-Дашборд, провиженинг и PromQL остаются без изменений.
+Старый сценарий: приложение запускается на хосте, а только Grafana/Prometheus в docker.
+Для этого в `prometheus.yml` оставлен fallback-таргет `host.docker.internal:9100`,
+а отдельный compose-файл этой папки можно поднимать руками:
+
+```bash
+python -m case3.infra.runtime          # /metrics на :9100 хоста
+cd deploy/observability
+docker compose -f docker-compose.host.yml up   # см. файл в этой папке (если нужен)
+```
+
+Но штатный путь — корневой `docker-compose.yml`, там оба варианта таргета прописаны.

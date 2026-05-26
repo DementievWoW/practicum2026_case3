@@ -78,7 +78,11 @@ class LLMGenerator(SQLGenerator):
     def _system_prompt(self, reflection: list[Lesson], task_description: str) -> str:
         base = (
             "Ты — генератор PostgreSQL-запросов по описанию задачи и схеме БД. "
-            "Возвращай только безопасный SQL в блоке ```sql."
+            "Возвращай только безопасный SQL в блоке ```sql.\n"
+            "Правила: при TOP-N / «первые N» / LIMIT ВСЕГДА добавляй ORDER BY со "
+            "стабильным tie-break (обычно `id ASC`; для запросов с GROUP BY tie-break — "
+            "по grouped-колонке типа name, НЕ по id). Иначе результат недетерминирован. "
+            "Для join используй FK-связи из комментариев схемы (поля `-- FK:tbl.col`)."
         )
         base += self._schema_block()
         base += self._fewshot_block(task_description)
@@ -90,6 +94,26 @@ class LLMGenerator(SQLGenerator):
             )
         return base
 
+    def _retry_block(self, sql_history: list[str] | None,
+                     audit_feedback: AuditResult | None) -> str:
+        """@brief Конкретная обратная связь ретрая: отклонённый SQL + найденные проблемы.
+
+        Без неё модель не «видит», что именно отклонено, и повторяет ту же ошибку
+        (обобщённых уроков в system недостаточно под явный запрос пользователя)."""
+        if not audit_feedback or audit_feedback.approved:
+            return ""
+        last = (sql_history or [""])[-1]
+        probs = "\n".join(f"  - {v.vuln_class}: {v.description}"
+                          for v in audit_feedback.vulnerabilities)
+        return (
+            "\n\nВАЖНО: твой предыдущий запрос ОТКЛОНЁН аудитором безопасности:\n"
+            f"{last}\n"
+            "Проблемы:\n" + probs +
+            "\n\nИсправь ИМЕННО эти проблемы. Чувствительные поля (ИНН, телефон, email, "
+            "паспорт, номер счёта) НЕ выбирай сырыми — маскируй (например LEFT(col,4)||'***') "
+            "или агрегируй (count/sum). Любой SELECT строк обязан иметь LIMIT."
+        )
+
     def generate(
         self,
         task_description: str,
@@ -99,13 +123,15 @@ class LLMGenerator(SQLGenerator):
         reflection: list[Lesson] | None = None,
     ) -> str:
         """
-        @brief NL-задача (+ positive few-shot + reflection) → SQL.
-        @param reflection  Накопленные уроки (in-context reflection-loop).
+        @brief NL-задача (+ positive few-shot + reflection + обратная связь аудита) → SQL.
+        @param reflection      Накопленные уроки (in-context reflection-loop).
+        @param audit_feedback  Результат прошлого аудита — для конкретной правки.
         @return SQL-строка.
         """
+        user = task_description + self._retry_block(sql_history, audit_feedback)
         messages = [
             {"role": "system", "content": self._system_prompt(reflection or [], task_description)},
-            {"role": "user", "content": task_description},
+            {"role": "user", "content": user},
         ]
         resp = self.llm.chat(messages, temperature=0.3)
         return _strip_sql_fence(resp.text)

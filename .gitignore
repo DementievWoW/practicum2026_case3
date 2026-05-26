@@ -25,9 +25,12 @@ reports/
 .vscode/*
 !.vscode/settings.json
 
-# Env vars
+# Env vars / secrets (никогда не пушим — ключи API, токены)
 .env
 .env.local
+secrets/
+*.key
+*.secret
 
 # OS
 .DS_Store

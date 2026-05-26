@@ -1,0 +1,171 @@
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ SQL Security — полный стек одним `docker compose up`.                   │
+# │  ┌──────────┐  ┌──────────┐  ┌────────────┐  ┌──────────┐ ┌──────────┐ │
+# │  │ postgres │← │ seeder   │  │  app       │→ │ langfuse │ │ grafana  │ │
+# │  │ (demo_db)│  │ (one-shot│  │ FastAPI    │  │  v2      │ │ + prom   │ │
+# │  └──────────┘  │  faker)  │  │  + /metrics│  └──────────┘ └──────────┘ │
+# │                └──────────┘  └────────────┘                            │
+# │                                                                         │
+# │ Порты на хост (нестандартные — чтобы не конфликтовать с другими стеками):
+# │   18000 — FastAPI         (POST /audit, GET /healthz)                   │
+# │   19090 — Prometheus                                                    │
+# │   13000 — Grafana          (admin/admin)                                │
+# │   13001 — Langfuse UI                                                   │
+# │   15432 — Postgres demo_db                                              │
+# │   19100 — /metrics (приложение)                                         │
+# │ Внутри сети compose имена `db`/`app`/`prometheus`/`grafana` слушают     │
+# │ стандартные порты — это меняет только маппинг хост:контейнер.           │
+# │                                                                         │
+# │ Секреты:                                                                │
+# │   secrets/llm_api_key (gitignored) → /run/secrets/llm_api_key в app.    │
+# │   Нет файла → app поднимется с mock-LLM (заметно по логам).             │
+# └─────────────────────────────────────────────────────────────────────────┘
+#
+# Запуск (из корня репо — здесь же лежит .env):
+#   docker compose up -d --build
+# Стоп:
+#   docker compose down [-v]          # -v снесёт volume с БД и Langfuse-историей
+
+name: sqlsec
+
+services:
+  # ─── 1. Postgres с данными кейса (60 таблиц) ──────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: sqlsec-db
+    environment:
+      POSTGRES_DB: demo_db
+      POSTGRES_USER: distr_user
+      POSTGRES_PASSWORD: pass
+    ports:
+      - "15432:5432"             # хост-порт 15432 (5432 занят локальной PG разработки)
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      # /docker-entrypoint-initdb.d выполняется ОДИН раз при первой инициализации volume
+      - ./deploy/init-db:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U distr_user -d demo_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ─── 2. Одноразовый сидер (faker + introspect schema) ─────────────────────
+  seeder:
+    build:
+      context: .
+      dockerfile: deploy/seed/Dockerfile
+    container_name: sqlsec-seeder
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: demo_db
+      DB_USER: distr_user
+      DB_PASSWORD: pass
+      SEED_N: "500"
+    restart: "no"                  # один прогон и стоп
+
+  # ─── 3. Наше приложение: FastAPI + /metrics ───────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sqlsec-app
+    depends_on:
+      db: { condition: service_healthy }
+    ports:
+      - "18000:8000"               # FastAPI (8000 на хосте занят другим стеком)
+      - "19100:9100"               # /metrics
+    environment:
+      # LLM: ключ читается из секрета (LLM_API_KEY_FILE → fallback в openai_compat.py)
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://openrouter.ai/api/v1}
+      LLM_MODEL: ${LLM_MODEL:-qwen/qwen-2.5-coder-32b-instruct}
+      LLM_API_KEY_FILE: /run/secrets/llm_api_key
+      LLM_TIMEOUT: "120"
+      # БД (на будущее — если узлы захотят интроспекцию)
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: demo_db
+      DB_USER: distr_user
+      DB_PASSWORD: pass
+      # Langfuse (опц., StubTracer без них)
+      LANGFUSE_HOST: http://langfuse:3000
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+    secrets:
+      - llm_api_key
+
+  # ─── 4. Prometheus — скрейпит app:9100 ────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: sqlsec-prometheus
+    ports:
+      - "19090:9090"               # 9090 на хосте занят hw8_prometheus
+    volumes:
+      - ./deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # для fallback-таргета (см. prometheus.yml)
+
+  # ─── 5. Grafana — дашборды + datasource из provisioning ───────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: sqlsec-grafana
+    ports:
+      - "13000:3000"               # 3000 на хосте занят hw8_grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+  # ─── 6. Langfuse v2 (трейсинг LLM-цепочек). v2 — single-container,         ─
+  #       нужен только postgres. v3 — требует clickhouse+redis+minio (тяжело).
+  langfuse-db:
+    image: postgres:16-alpine
+    container_name: sqlsec-langfuse-db
+    environment:
+      POSTGRES_DB: langfuse
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+    volumes:
+      - langfuse_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: sqlsec-langfuse
+    depends_on:
+      langfuse-db: { condition: service_healthy }
+    ports:
+      - "13001:3000"               # на хосте 13001 (3001 тоже может быть занят)
+    environment:
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      NEXTAUTH_URL: http://localhost:13001
+      # NEXTAUTH_SECRET / SALT: 32+ байта base64. Генерация: openssl rand -base64 32
+      # (значения подтягиваются из .env — корень репозитория; пример в .env.example)
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:?LANGFUSE_NEXTAUTH_SECRET required (openssl rand -base64 32)}
+      SALT: ${LANGFUSE_SALT:?LANGFUSE_SALT required (openssl rand -base64 32)}
+      TELEMETRY_ENABLED: "false"
+      # Опционально создать первый аккаунт автоматически (только локально!):
+      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-sqlsec}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-admin@example.com}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-admin1234}
+
+volumes:
+  db_data:
+  langfuse_db_data:
+
+secrets:
+  # Файл подкладывается локально (gitignored). В прод/k8s — внешний секрет.
+  llm_api_key:
+    file: ./secrets/llm_api_key

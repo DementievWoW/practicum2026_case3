@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -136,9 +137,78 @@ class StubTracer:
                 print(f"   └ {s['name']}: {s['duration_ms']}ms")
 
 
-_default = StubTracer()
+# ─────────────────────────────────────────────────────────────────────────────
+# Реальный Langfuse (адаптер под наш контракт Trace/Span). SDK v2.
+# Включается, если заданы LANGFUSE_PUBLIC_KEY / SECRET_KEY (иначе StubTracer).
+# Любая ошибка SDK не роняет пайплайн (наблюдаемость не критична).
+# ─────────────────────────────────────────────────────────────────────────────
+class _LfSpan:
+    def __init__(self, sp): self._sp = sp
+
+    def update(self, *, output: Any = None, **md) -> None:
+        try: self._sp.update(output=output, metadata=md or None)
+        except Exception: pass
+
+    def __enter__(self) -> "_LfSpan": return self
+
+    def __exit__(self, *exc) -> bool:
+        try: self._sp.end()
+        except Exception: pass
+        return False
+
+
+class _LfTrace:
+    def __init__(self, tr): self._tr = tr
+
+    def span(self, name: str, *, input: Any = None, **md) -> _LfSpan:
+        return _LfSpan(self._tr.span(name=name, input=input, metadata=md or None))
+
+    def score(self, name: str, value: float) -> None:
+        try: self._tr.score(name=name, value=value)
+        except Exception: pass
+
+    def update(self, *, output: Any = None, **md) -> None:
+        try: self._tr.update(output=output, metadata=md or None)
+        except Exception: pass
+
+    def __enter__(self) -> "_LfTrace": return self
+
+    def __exit__(self, *exc) -> bool: return False
+
+
+class LangfuseTracer:
+    """@brief Реальный трейсер поверх langfuse SDK (drop-in под контракт Tracer)."""
+
+    def __init__(self, client) -> None:
+        self._c = client
+
+    def trace(self, name: str, *, input: Any = None, **md) -> _LfTrace:
+        return _LfTrace(self._c.trace(name=name, input=input, metadata=md or None))
+
+    def print_summary(self) -> None:
+        try: self._c.flush()
+        except Exception: pass
+        print("⊙ трейсы отправлены в Langfuse (см. UI).")
+
+
+_default: Tracer | None = None
 
 
 def get_tracer() -> Tracer:
-    """@brief Глобальный трейсер (по умолчанию StubTracer)."""
+    """@brief Глобальный трейсер: Langfuse если есть ключи, иначе StubTracer."""
+    global _default
+    if _default is not None:
+        return _default
+    if os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY"):
+        try:
+            from langfuse import Langfuse
+            _default = LangfuseTracer(Langfuse(
+                public_key=os.environ["LANGFUSE_PUBLIC_KEY"],
+                secret_key=os.environ["LANGFUSE_SECRET_KEY"],
+                host=os.environ.get("LANGFUSE_HOST", "http://localhost:3001"),
+            ))
+            return _default
+        except Exception:
+            pass
+    _default = StubTracer()
     return _default

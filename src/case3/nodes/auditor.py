@@ -18,12 +18,31 @@
 
 from __future__ import annotations
 
+import json as _json
 import re
 
 from case3.contracts import AuditResult, Finding, SecurityAuditor
 from case3.audit.sensitive import detect_column, detect_pii_in_literals
 from case3.audit.knowledge import KnowledgeBase
 from case3.llm.client import LLMClient
+
+
+def _extract_json(text: str) -> dict | None:
+    """@brief Достать JSON-объект из ответа LLM (фенсы ```json```, лишний текст, обрезки)."""
+    if not text:
+        return None
+    # 1) убрать markdown-фенс ```json ... ```
+    m = re.search(r"```(?:json)?\s*(.+?)```", text, re.S | re.I)
+    if m:
+        text = m.group(1)
+    # 2) взять подстроку от первой { до последней }
+    s, e = text.find("{"), text.rfind("}")
+    if s == -1 or e <= s:
+        return None
+    try:
+        return _json.loads(text[s:e + 1])
+    except Exception:
+        return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -191,6 +210,12 @@ def run_phase1(sql: str) -> list[Finding]:
     findings: list[Finding] = []
     for rule in PHASE1_RULES:
         findings.extend(rule(sql))
+    # schema-grounded PII (по реальной схеме + COMMENT) — fail-safe
+    try:
+        from case3.audit.schema_sensitive import findings as _schema_findings
+        findings.extend(_schema_findings(sql))
+    except Exception:
+        pass
     return findings
 
 
@@ -230,18 +255,37 @@ class HybridAuditor(SecurityAuditor):
         # Phase 1 — детерминированно
         findings = run_phase1(sql_query)
 
-        # Phase 2 — LLM-триаж (объяснение/рекомендация). НЕ понижает риск.
-        # Асимметрия (ADR-0012): подмешиваем negative few-shot найденных классов.
+        # Phase 2 — LLM-судья в режиме structured output (JSON, prompt-only).
+        # OpenRouter 500-ит на response_format для Qwen-Coder → достаём JSON из
+        # ответа надёжно: фенсы ```json```, окружающий текст, обрезки.
+        # Не понижает риск — только обогащает рекомендациями (ADR-0011).
         recommendation = ""
+        judge_recs: dict[str, str] = {}                     # vuln_class → рекомендация судьи
         if self.llm and findings:
-            resp = self.llm.chat([
-                {"role": "system", "content": "Ты security-судья (auditor) PostgreSQL."},
+            classes = sorted({f.vuln_class for f in findings})
+            schema_hint = (
+                'Верни ТОЛЬКО валидный JSON (без markdown, без текста вне JSON), схема:\n'
+                f'{{"summary":"<краткое объяснение>",'
+                f'"findings":[{{"vuln_class":"<{"|".join(classes)}>","recommendation":"<как исправить>"}}]}}\n'
+                'По одной записи на каждый класс из находок Phase 1.'
+            )
+            resp = self.llm.chat(messages=[
+                {"role": "system",
+                 "content": "Ты security-судья PostgreSQL. " + schema_hint},
                 {"role": "user", "content":
-                    f"SQL: {sql_query}\nНаходки Phase 1: {[f.rule_id for f in findings]}."
+                    f"SQL: {sql_query}\nКлассы уязвимостей из Phase 1: {classes}."
                     + self._negative_shots(sql_query, findings)
-                    + "\nДай краткую рекомендацию по исправлению."},
-            ])
-            recommendation = resp.text
+                    + " Ответь JSON."},
+            ], max_tokens=1024)
+            verdict = _extract_json(resp.text)
+            if verdict:
+                recommendation = (verdict.get("summary") or "").strip()
+                for j in (verdict.get("findings") or []):
+                    if isinstance(j, dict) and j.get("vuln_class") and j.get("recommendation"):
+                        judge_recs[j["vuln_class"]] = j["recommendation"].strip()
+            else:
+                # fallback: свободный текст судьи (но без сырого мусора в summary)
+                recommendation = resp.text.strip()[:200]
 
         # RAG #2 — обоснование каждой находки знаниями (evidence + фикс из базы).
         vulns = []
@@ -249,6 +293,8 @@ class HybridAuditor(SecurityAuditor):
             kn = self.kb.lookup(f.vuln_class)
             evidence = sorted(set(f.evidence_refs) | (set(kn.evidence()) if kn else set()))
             parts = []
+            if judge_recs.get(f.vuln_class):                # приоритет — рекомендация судьи
+                parts.append(judge_recs[f.vuln_class])
             if kn and kn.fix:
                 parts.append(kn.fix)
             if evidence:

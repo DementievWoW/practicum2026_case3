@@ -1,0 +1,17 @@
+# Production runtime — минимально необходимое для пайплайна и сервиса.
+# Установка:  pip install -r requirements.txt   (Python 3.10+)
+
+# LLM-клиент: HTTP к OpenAI-совместимому API (OpenRouter, vLLM serve, российские провайдеры)
+requests>=2.31
+
+# Подключение к sandbox-БД (Postgres)
+psycopg2-binary>=2.9
+
+# HTTP-сервис (POST /audit, GET /healthz, GET /metrics)
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.0
+
+# Langfuse — реальный трейсинг (опционально, fallback на StubTracer внутри tracing.py)
+# Пинимся на v2: совместима с self-host Langfuse v2 в нашем compose-стеке.
+langfuse>=2.0,<3

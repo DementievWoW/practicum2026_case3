@@ -139,8 +139,19 @@ def run_pipeline(
     @return SystemResult по контракту baseline.
     """
     if llm is None:
-        from case3.llm.mock import MockLLMClient
-        llm = MockLLMClient(scenario="evolve")
+        from case3.llm.factory import make_llm
+        llm = make_llm()   # OpenAI-compat / Colab / mock — по .env
+
+    # Schema linking (ADR-0003): если схему не передали — выбираем релевантные
+    # таблицы из 60 под задачу (иначе всю схему в промпт не вложить).
+    if db_schema is None:
+        try:
+            from case3.schema.linker import SchemaLinker
+            # компактно: top-4 таблицы, до 12 колонок, без FK-взрыва (бюджет промпта/VRAM)
+            db_schema = SchemaLinker().link_text(task_description, k=4, max_cols=12,
+                                                 fk_closure=False)
+        except Exception:
+            db_schema = None
 
     # Асимметричный few-shot store (ADR-0012): positives → генератору, negatives → судье.
     store = None
