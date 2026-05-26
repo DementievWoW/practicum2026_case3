@@ -20,6 +20,7 @@
 """
 from __future__ import annotations
 
+import json as _json
 import os
 from typing import Any
 
@@ -124,6 +125,20 @@ _UI_HTML = """<!doctype html>
   .rs-wrap { max-height:420px; overflow:auto; border:1px solid #21262d; border-radius:6px }
   /* iframe */
   iframe { width:100%; border:1px solid #30363d; border-radius:6px; background:#0d1117 }
+  /* chat */
+  .msgs { display:flex; flex-direction:column; gap:12px; margin-bottom:12px }
+  .msg { max-width:78%; padding:10px 14px; border-radius:10px; font-size:13px }
+  .msg.user { align-self:flex-end; background:#1f2937; border:1px solid #30363d }
+  .msg.bot  { align-self:flex-start; background:#161b22; border:1px solid #30363d }
+  .msg.bot.clarify { border-left:3px solid var(--accent) }
+  .msg.warn { align-self:stretch; background:#2b1d10; border:1px solid #d29922; color:#ffd28b }
+  .options { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px }
+  .opt { background:#21262d; border:1px solid #30363d; color:var(--fg); padding:5px 10px;
+         border-radius:14px; font-size:12px; cursor:pointer }
+  .opt:hover { border-color:var(--accent) }
+  .answer-row { display:flex; gap:6px; margin-top:8px }
+  .answer-row input { flex:1; background:#0d1117; color:var(--fg); border:1px solid #30363d;
+                       border-radius:6px; padding:6px 10px; font:13px ui-monospace,Menlo,monospace }
 </style></head>
 <body><div class="wrap">
   <h1>SQL Security · Multi-Agent</h1>
@@ -137,21 +152,23 @@ _UI_HTML = """<!doctype html>
     <div class="tab" data-pane="langfuse">Langfuse</div>
   </div>
 
-  <!-- ─── Pane: Аудит ─────────────────────────────────────────────────────── -->
+  <!-- ─── Pane: Аудит (chat-стиль) ───────────────────────────────────────── -->
   <div class="pane active" id="pane-audit">
     <div class="card">
-      <div class="label">NL-задача</div>
-      <textarea id="task" placeholder="напр.: Топ-5 компаний по числу договоров: name, count"></textarea>
+      <div class="label">NL-задача (новый диалог)</div>
+      <textarea id="task" placeholder="напр.: Удали старые черновики заявок"></textarea>
       <div class="row">
-        <button id="go">Запустить аудит</button>
+        <button id="go">Начать</button>
+        <button class="ghost" id="reset" style="display:none">Сбросить диалог</button>
         <span class="chip" data-q="Сколько кредитных договоров?">агрегат</span>
         <span class="chip" data-q="Топ-5 компаний по числу договоров (count desc, name asc): name, count">join+top-N</span>
+        <span class="chip" data-q="Удали старые черновики заявок">DELETE (clarify)</span>
+        <span class="chip" data-q="Покажи активных клиентов">«активный» (clarify)</span>
         <span class="chip" data-q="Покажи всё про клиентов">провокация: SELECT *</span>
-        <span class="chip" data-q="Удали старые черновики заявок">провокация: DELETE</span>
         <span class="chip" data-q="Покажи все таблицы базы данных из pg_catalog">провокация: pg_catalog</span>
-        <span class="chip" data-q="Покажи 10 заявок с самой высокой оценкой риска: id, сумма">галлюцинация колонки</span>
       </div>
     </div>
+    <div id="msgs" class="msgs"></div>
     <div id="out"></div>
   </div>
 
@@ -223,32 +240,97 @@ $$('.chip').forEach(c => {
 function esc(s) { return String(s ?? '').replace(/[&<>]/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 
+// ── state диалога ──
+let _task = '';                 // оригинальная NL-задача
+let _history = [];              // массив ChatTurn'ов (assistant clarify + user content)
 let _lastSQL = null;
 let _lastApproved = false;
+const msgs = $('#msgs');
 
-$('#go').onclick = async () => {
-  const task = $('#task').value.trim();
-  if (!task) return;
-  const btn = $('#go');
-  btn.disabled = true;
-  out.innerHTML = '<div class="card">… идёт цикл генератор→судья→reflection …</div>';
+function renderUser(text) {
+  msgs.insertAdjacentHTML('beforeend',
+    `<div class="msg user">${esc(text)}</div>`);
+  msgs.scrollIntoView({behavior:'smooth', block:'end'});
+}
+function renderBot(html, cls='bot') {
+  const div = document.createElement('div');
+  div.className = 'msg ' + cls;
+  div.innerHTML = html;
+  msgs.appendChild(div);
+  msgs.scrollIntoView({behavior:'smooth', block:'end'});
+  return div;
+}
+function renderWarnings(warnings) {
+  if (!warnings || !warnings.length) return;
+  const html = warnings.map(w =>
+    `<b>${esc(w.code)}</b> · ${esc(w.severity)}<br>${esc(w.message)}<br><small>${esc(w.hint)}</small>`
+  ).join('<hr style="border:0;border-top:1px solid #6e4500;margin:8px 0">');
+  renderBot('⚠ NL-валидатор предупреждает:<br>' + html, 'warn');
+}
+function resetDialog() {
+  _task = ''; _history = []; _lastSQL = null; _lastApproved = false;
+  msgs.innerHTML = '';
+  out.innerHTML = '';
+  $('#task').value = '';
+  $('#reset').style.display = 'none';
+}
+$('#reset').onclick = resetDialog;
+
+// ── отправить очередной ход в /chat ──
+async function sendChat(answer /* optional — текстовый ответ юзера на clarify */) {
+  if (answer) {
+    _history.push({role:'user', content: answer});
+    renderUser(answer);
+  }
+  out.innerHTML = '<div class="card">… запрос идёт …</div>';
   try {
-    const r = await fetch('/audit', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({task})
+    const r = await fetch('/chat', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({task: _task, history: _history})
     });
     if (!r.ok) {
       out.innerHTML = `<div class="card err">HTTP ${r.status}: ${esc(await r.text())}</div>`;
       return;
     }
     const d = await r.json();
+    if (d.nl_warnings && d.nl_warnings.length) renderWarnings(d.nl_warnings);
+
+    if (d.type === 'clarify') {
+      // assistant задал уточняющий вопрос → запоминаем в history и рисуем
+      _history.push({role:'assistant', question: d.question, options: d.options || []});
+      const opts = (d.options || []).map(o =>
+        `<span class="opt" data-a="${esc(o)}">${esc(o)}</span>`).join('');
+      const free = `<div class="answer-row">
+                      <input type="text" placeholder="свой ответ…" id="free-answer">
+                      <button id="free-send">→</button>
+                    </div>`;
+      renderBot(`<b>Уточнение:</b><br>${esc(d.question)}<div class="options">${opts}</div>${free}`,
+                'bot clarify');
+      out.innerHTML = '';
+      // обработчики
+      msgs.querySelectorAll('.opt').forEach(o => {
+        o.onclick = () => sendChat(o.dataset.a);
+      });
+      const fa = $('#free-answer'), fb = $('#free-send');
+      const submitFree = () => {
+        const a = fa.value.trim();
+        if (a) sendChat(a);
+      };
+      fa.onkeydown = e => { if (e.key === 'Enter') submitFree(); };
+      fb.onclick = submitFree;
+      return;
+    }
+
+    // d.type === 'sql' — финальный результат
     _lastSQL = d.final_sql;
     _lastApproved = d.approved;
-
     const verdict = d.approved
       ? '<span class="ok">✓ approved</span>'
       : '<span class="err">✗ rejected</span>';
     const traj = (d.risk_trajectory || []).map(x => x.toFixed(1)).join(' → ');
+    renderBot(`SQL готов · ${verdict} · итераций <b>${d.iterations_used}</b>
+               · риск <b>${traj}</b>`);
+
     const vulnsHtml = (d.vulnerabilities || []).map(v => `
       <div class="vuln ${v.risk_score < 4 ? 'low':''}">
         <b>${esc(v.vuln_class)}</b> · risk ${v.risk_score.toFixed(1)}<br>
@@ -258,19 +340,12 @@ $('#go').onclick = async () => {
     const runBtn = d.approved
       ? '<button id="run-sql">Выполнить на demo_db →</button>'
       : '<button class="ghost" disabled>SQL отклонён аудитором — выполнить нельзя</button>';
-    const traceId = d.metadata && d.metadata.trace_id;
+    const traceId = d.trace_id;
     const traceLink = traceId
       ? `<a href="http://localhost:13001/trace/${traceId}" target="_blank">
            <button class="ghost">Открыть trace ${traceId.slice(0,8)} в Langfuse →</button></a>`
       : '';
     out.innerHTML = `
-      <div class="card">
-        <div class="meta">
-          ${verdict}
-          <span>итераций: <b>${d.iterations_used}</b></span>
-          <span>траектория риска: <b>${traj}</b></span>
-        </div>
-      </div>
       <div class="card">
         <div class="label">Финальный SQL</div>
         <pre>${esc(d.final_sql)}</pre>
@@ -285,22 +360,28 @@ $('#go').onclick = async () => {
         <pre>${esc(d.audit_log)}</pre>
       </div>
       <div id="run-out"></div>`;
-
-    // обновим Langfuse-таб подсказкой
     if (traceId) {
       $('#lf-hint').innerHTML = `последний trace: <a href="http://localhost:13001/trace/${traceId}" target="_blank">${traceId.slice(0,8)}</a>`;
       $('#lf-hint').className = 'ok';
-      // перезагрузим iframe на конкретный trace
       $('#langfuse-frame').src = `http://localhost:13001/trace/${traceId}`;
     }
-
     const runBtnEl = $('#run-sql');
     if (runBtnEl) runBtnEl.onclick = runApprovedSQL;
+    $('#reset').style.display = '';
   } catch (e) {
     out.innerHTML = `<div class="card err">network error: ${esc(e.message)}</div>`;
-  } finally {
-    btn.disabled = false;
   }
+}
+
+// ── старт нового диалога ──
+$('#go').onclick = () => {
+  const t = $('#task').value.trim();
+  if (!t) return;
+  resetDialog();
+  _task = t;
+  $('#task').value = t;            // не стираем — пусть видно
+  renderUser(t);
+  sendChat();
 };
 
 async function runApprovedSQL() {
@@ -398,6 +479,165 @@ def audit(req: AuditRequest) -> AuditResponse:
         vulnerabilities=vulns,
         audit_log=res.audit_log,
         metadata=res.metadata,
+    )
+
+
+# ─── /chat: multi-turn с clarification ──────────────────────────────────────
+# Stateless: UI шлёт всю историю каждый раз. Сервер либо возвращает clarify
+# (question + options), либо запускает полный pipeline (run_instrumented).
+# До MAX_CLARIFY_ROUNDS=2 уточнений; на третьем — force_sql.
+MAX_CLARIFY_ROUNDS = 2
+
+
+class ChatTurn(BaseModel):
+    role: str = Field(..., pattern="^(user|assistant)$")
+    content: str | None = None          # для user.content или assistant.sql
+    question: str | None = None         # assistant.clarify
+    options: list[str] | None = None    # assistant.clarify
+
+
+class ChatRequest(BaseModel):
+    task: str = Field(..., min_length=3, max_length=2000,
+                      description="Оригинальная NL-задача (первое сообщение)")
+    history: list[ChatTurn] = Field(default_factory=list,
+                                    description="Раунды clarify, если уже были")
+
+
+class NLWarningOut(BaseModel):
+    code: str
+    severity: str
+    message: str
+    hint: str = ""
+
+
+class ChatResponse(BaseModel):
+    type: str = Field(..., pattern="^(clarify|sql)$")
+    # для type=clarify:
+    question: str | None = None
+    options: list[str] | None = None
+    # для type=sql:
+    final_sql: str | None = None
+    approved: bool | None = None
+    iterations_used: int | None = None
+    risk_trajectory: list[float] | None = None
+    vulnerabilities: list[VulnOut] | None = None
+    audit_log: str | None = None
+    trace_id: str | None = None
+    metadata: dict[str, Any] | None = None
+    # NL-warnings (информационные, не блокирующие)
+    nl_warnings: list[NLWarningOut] = Field(default_factory=list)
+
+
+_CLARIF_LOG = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))),
+    "data", "clarifications.jsonl")
+
+
+def _persist_clarification(task: str, history: list[ChatTurn],
+                           final_sql: str | None, approved: bool | None) -> None:
+    """@brief Запись в data/clarifications.jsonl — для будущего few-shot/RLHF.
+    Никакой PII (текст пользователя) фильтровать не пытаемся: это локальная
+    разработка, в проде поверх — anon-pipeline."""
+    import datetime
+    import logging
+    import uuid
+    try:
+        os.makedirs(os.path.dirname(_CLARIF_LOG), exist_ok=True)
+        with open(_CLARIF_LOG, "a", encoding="utf-8") as f:
+            f.write(_json.dumps({
+                "id": uuid.uuid4().hex[:12],
+                "ts": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                "task": task,
+                "history": [h.model_dump(exclude_none=True) for h in history],
+                "final_sql": final_sql,
+                "approved": approved,
+            }, ensure_ascii=False) + "\n")
+    except Exception as e:
+        # Не валим запрос пользователя, но фиксируем в логах — нам важно
+        # видеть когда persist ломается (это собирает датасет для будущего fine-tune).
+        logging.getLogger("uvicorn.error").warning("clarif persist failed: %r", e)
+
+
+@app.post("/chat", response_model=ChatResponse)
+def chat(req: ChatRequest) -> ChatResponse:
+    """@brief Multi-turn с clarification. Stateless (history от UI каждый раз)."""
+    # 1) NL-валидация — только на первом ходу (history пустой)
+    nl_warnings: list[NLWarningOut] = []
+    if not req.history:
+        try:
+            from case3.audit.nl_validator import validate_nl
+            for w in validate_nl(req.task):
+                nl_warnings.append(NLWarningOut(
+                    code=w.code, severity=w.severity,
+                    message=w.message, hint=w.hint))
+        except Exception:
+            pass
+
+    # 2) Подсчёт уже состоявшихся раундов clarify
+    n_clarifies = sum(1 for h in req.history if h.role == "assistant" and h.question)
+    force_sql = n_clarifies >= MAX_CLARIFY_ROUNDS
+
+    # 3) LLM генератор — спрашиваем либо clarify, либо SQL
+    try:
+        from case3.llm.factory import make_llm
+        from case3.schema.linker import SchemaLinker
+        from case3.nodes.generator import LLMGenerator
+        llm = make_llm()
+        db_schema = SchemaLinker().link_text(req.task, k=4, max_cols=12, fk_closure=False)
+        gen = LLMGenerator(llm=llm, db_schema=db_schema)
+        # переведём history в формат, который понимает generate_or_clarify
+        clar_hist = [
+            {"role": h.role,
+             "question": h.question or "",
+             "options": h.options or [],
+             "content": h.content or ""}
+            for h in req.history
+        ]
+        out = gen.generate_or_clarify(req.task, clarify_history=clar_hist,
+                                      force_sql=force_sql)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"generator error: {e}")
+
+    # 4) Если clarify — возвращаем сразу, pipeline не запускаем
+    if out.get("type") == "clarify":
+        return ChatResponse(type="clarify",
+                            question=out.get("question"),
+                            options=out.get("options") or [],
+                            nl_warnings=nl_warnings)
+
+    # 5) Иначе — собираем «расширенную» задачу для pipeline (NL + ответы пользователя)
+    final_task = req.task
+    for h in req.history:
+        if h.role == "user" and h.content:
+            final_task += f"\nУточнение: {h.content}"
+
+    # 6) Полный пайплайн (тот же что для /audit) — на расширенной задаче
+    try:
+        res = run_instrumented(final_task)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"pipeline error: {e}")
+
+    last_audit = res.iterations_log[-1].audit_result if res.iterations_log else None
+    vulns = [VulnOut(vuln_class=v.vuln_class, risk_score=v.risk_score,
+                     description=v.description, recommendation=v.recommendation)
+             for v in (last_audit.vulnerabilities if last_audit else [])]
+
+    # 7) Сохраним диалог в jsonl — это будущий positive few-shot
+    if req.history:
+        _persist_clarification(req.task, req.history, res.final_sql, res.approved)
+
+    return ChatResponse(
+        type="sql",
+        final_sql=res.final_sql,
+        approved=res.approved,
+        iterations_used=res.iterations_used,
+        risk_trajectory=res.metadata.get("risk_trajectory", []),
+        vulnerabilities=vulns,
+        audit_log=res.audit_log,
+        trace_id=res.metadata.get("trace_id"),
+        metadata=res.metadata,
+        nl_warnings=nl_warnings,
     )
 
 

@@ -97,6 +97,12 @@ services:
       # в SchemaLinker/FewShotStore. Без токена — graceful fallback на лексику.
       HF_TOKEN: ${HF_TOKEN:-}
       HF_EMBEDDING_MODEL: ${HF_EMBEDDING_MODEL:-BAAI/bge-m3}
+    volumes:
+      # Bind-mount data/ для записи clarifications.jsonl и кэша embeddings.
+      # Имена файлов фиксированы в коде (см. service.py::_CLARIF_LOG,
+      # embeddings.py::_DEFAULT_CACHE_PATH). schema_catalog.json и
+      # dataset_v1.jsonl read-only — образ уже включает копии при COPY.
+      - ./data:/app/data
     secrets:
       - llm_api_key
 

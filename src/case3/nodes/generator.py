@@ -8,10 +8,16 @@
 
     Reflection-уроки (in-context, ADR-0002) кладутся в системный промпт:
     генератор «видит» прошлые ошибки и не повторяет их — без обучения весов.
+
+    Дополнительно генератор поддерживает **clarification dialog**: на
+    неоднозначных NL-задачах возвращает JSON {"clarify": true, "question": ...}
+    вместо SQL. Pipeline в /chat endpoint обрабатывает это и спрашивает
+    пользователя через UI.
 """
 
 from __future__ import annotations
 
+import json as _json
 import re
 
 from case3.contracts import AuditResult, Lesson, SQLGenerator
@@ -22,6 +28,48 @@ def _strip_sql_fence(text: str) -> str:
     """@brief Достаёт SQL из ```sql ... ``` (реальные LLM часто оборачивают в фенс)."""
     m = re.search(r"```(?:sql)?\s*(.+?)```", text, re.S | re.I)
     return (m.group(1) if m else text).strip()
+
+
+def _extract_clarify_json(text: str) -> dict | None:
+    """@brief Достаёт {"clarify": true, "question": ..., "options": [...]} из ответа модели.
+
+    @details
+        Модель может вернуть JSON в нескольких формах:
+          - чистый JSON в начале ответа: `{"clarify":true,...}`
+          - в markdown-фенсе ```json ... ```
+          - JSON-объект где-то внутри текста (берём первый валидный {...})
+        Если JSON есть И ключ "clarify" == True → возвращаем dict.
+        Иначе None — это значит модель сразу прислала SQL (не clarify).
+    """
+    if not text or not text.strip():
+        return None
+    # 1) фенс ```json ... ```
+    m = re.search(r"```(?:json)?\s*(\{.+?\})\s*```", text, re.S | re.I)
+    candidate = m.group(1) if m else None
+    # 2) если не было фенса — берём подстроку от первой { до парной }
+    if candidate is None:
+        s = text.find("{")
+        e = text.rfind("}")
+        if s == -1 or e <= s:
+            return None
+        candidate = text[s:e + 1]
+    try:
+        obj = _json.loads(candidate)
+    except _json.JSONDecodeError:
+        return None
+    if isinstance(obj, dict) and obj.get("clarify") is True:
+        # нормализуем options до list[str]
+        opts = obj.get("options") or []
+        if isinstance(opts, list):
+            opts = [str(o) for o in opts if o]
+        else:
+            opts = []
+        return {
+            "clarify": True,
+            "question": str(obj.get("question") or "").strip(),
+            "options": opts,
+        }
+    return None
 
 
 class LLMGenerator(SQLGenerator):
@@ -104,7 +152,30 @@ class LLMGenerator(SQLGenerator):
     def _security_hints_block(self) -> str:
         return self._CALIBRATION_HINTS if self.calibration_hints else ""
 
-    def _system_prompt(self, reflection: list[Lesson], task_description: str) -> str:
+    _CLARIFY_INSTRUCTION = (
+        "\n\n### Уточнение неоднозначностей (clarify mode)\n"
+        "Если в NL-задаче есть неоднозначность по схеме (например, «черновик» — это "
+        "`status = 0`, или `is_draft = true`, или отдельная таблица?), и в схеме "
+        "ниже нет однозначного ответа — НЕ угадывай. Верни СТРОГО JSON:\n"
+        "```json\n"
+        '{\"clarify\": true, \"question\": \"...?\", '
+        '\"options\": [\"вариант 1\", \"вариант 2\", \"вариант 3\"]}\n'
+        "```\n"
+        "Когда возвращать clarify:\n"
+        " - бизнес-термин без однозначного маппинга в схеме («просроченный», «черновик», "
+        "«активный клиент») и в комментариях колонок нет подсказки;\n"
+        " - выбор между несколькими FK-путями («компания клиента» через "
+        "`link_customer_id` или через `sys_employee.org_id`);\n"
+        " - период времени без указания дат («старые», «недавние», «за последний месяц»).\n"
+        "Когда НЕ возвращать clarify (а сразу SQL):\n"
+        " - задача однозначно ложится в схему (count, top-N с явными полями);\n"
+        " - это уже ретрай после reflection-урока (исправь по уроку, не спрашивай).\n"
+        "Максимум 2 раунда clarify за один запрос пользователя — потом обязан "
+        "вернуть SQL даже при остаточной неоднозначности (с разумным выбором).\n"
+    )
+
+    def _system_prompt(self, reflection: list[Lesson], task_description: str,
+                       clarify_allowed: bool = False) -> str:
         base = (
             "Ты — генератор PostgreSQL-запросов по описанию задачи и схеме БД. "
             "Возвращай только безопасный SQL в блоке ```sql.\n"
@@ -113,6 +184,8 @@ class LLMGenerator(SQLGenerator):
             "по grouped-колонке типа name, НЕ по id). Иначе результат недетерминирован. "
             "Для join используй FK-связи из комментариев схемы (поля `-- FK:tbl.col`)."
         )
+        if clarify_allowed:
+            base += self._CLARIFY_INSTRUCTION
         base += self._security_hints_block()
         base += self._schema_block()
         base += self._fewshot_block(task_description)
@@ -165,3 +238,55 @@ class LLMGenerator(SQLGenerator):
         ]
         resp = self.llm.chat(messages, temperature=0.3)
         return _strip_sql_fence(resp.text)
+
+    def generate_or_clarify(self, task_description: str,
+                            clarify_history: list[dict] | None = None,
+                            force_sql: bool = False) -> dict:
+        """
+        @brief Первый раунд: либо clarify, либо SQL. Используется /chat endpoint.
+
+        @param task_description  оригинальный NL-вопрос пользователя.
+        @param clarify_history   список прошлых вопросов/ответов из multi-turn:
+                                 [{"role":"assistant","question":..., "options":[]},
+                                  {"role":"user","content":"..."}, ...]
+        @param force_sql         если True — clarify не разрешён (после 2 раундов).
+        @return dict либо:
+                  {"type":"clarify","question":"...","options":[...]}
+                либо
+                  {"type":"sql","sql":"...","attempt_text":"..."}
+        """
+        history = clarify_history or []
+
+        # Соберём user-сообщение: оригинал + диалог уточнений
+        msgs = [{"role": "system",
+                 "content": self._system_prompt(
+                     reflection=[], task_description=task_description,
+                     clarify_allowed=not force_sql)}]
+        msgs.append({"role": "user", "content": task_description})
+        for h in history:
+            role = h.get("role")
+            if role == "assistant":
+                # ассистент задал clarify
+                q = h.get("question", "")
+                opts = h.get("options", [])
+                content = ("{\"clarify\":true,\"question\":" + _json.dumps(q, ensure_ascii=False)
+                           + ",\"options\":" + _json.dumps(opts, ensure_ascii=False) + "}")
+                msgs.append({"role": "assistant", "content": content})
+            elif role == "user":
+                msgs.append({"role": "user", "content": h.get("content", "")})
+
+        if force_sql:
+            # последнее напутствие: точно SQL, не clarify
+            msgs.append({"role": "user",
+                         "content": "Хватит уточнений — верни SQL по имеющейся информации."})
+
+        resp = self.llm.chat(msgs, temperature=0.3)
+        text = resp.text
+
+        # Сначала пробуем распарсить clarify-JSON; если нет — это SQL
+        if not force_sql:
+            cl = _extract_clarify_json(text)
+            if cl is not None:
+                return {"type": "clarify", **cl}
+
+        return {"type": "sql", "sql": _strip_sql_fence(text), "attempt_text": text}
