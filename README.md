@@ -4,27 +4,33 @@ NL→SQL с аудитом безопасности. Цикл «генерато
 один LLM на оба агента (асимметричный few-shot). Артефакт системы — SQL +
 audit log, без исполнения на проде.
 
-## Быстрый старт (всё в docker)
+## Быстрый старт — за 5 минут с нуля
 
 ```bash
-bash scripts/setup.sh            # создаст .env + secrets/ + сгенерит ключи
-docker compose up -d --build     # поднимет 6 сервисов
+git clone <repo> sqlsec && cd sqlsec
+make setup      # .env + secrets/ + Langfuse-секреты (идемпотентно)
+make up         # docker compose build + up (6 сервисов)
+make check      # smoke-test: 13 проверок (контейнеры + endpoints + /audit)
 ```
 
-После `setup.sh` без правок будет работать **MockLLM** (для демо без сети).
-Чтобы подключить реальную LLM (Qwen2.5-Coder через OpenRouter):
+Если `make check` показал все ✔ — открой **http://localhost:18000** и
+кликни любой чип в UI.
+
+> Подробный onboarding для коллеги-новичка (что поставить, что делать
+> когда сломалось): [docs/onboarding.md](docs/onboarding.md)
+
+По умолчанию работает **MockLLM** (шаблонные SQL без сети). Реальная LLM:
 
 ```bash
-echo 'sk-or-v1-...' > secrets/llm_api_key   # ваш ключ → docker secret
-docker compose up -d                        # recreate app с реальным LLM
+echo 'sk-or-v1-...' > secrets/llm_api_key   # ваш ключ OpenRouter
+make restart                                # recreate app
+make check
 ```
 
-Проверка:
+Langfuse-трейсы (опц., см. [docs/langfuse.md](docs/langfuse.md)):
+http://localhost:13001 → API Keys → `pk-lf-...`/`sk-lf-...` в `.env` → `make restart`.
 
-```bash
-curl -s -X POST localhost:18000/audit -H 'Content-Type: application/json' \
-     -d '{"task":"Сколько кредитных договоров?"}' | python3 -m json.tool
-```
+Удобные команды: `make help`. Список URL: `make open`.
 
 Сервисы (нестандартные хост-порты, чтобы не конфликтовать с другими стеками):
 
