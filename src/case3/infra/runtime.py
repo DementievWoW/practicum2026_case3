@@ -28,6 +28,7 @@ def run_instrumented(
     *,
     llm=None,
     tracer: Tracer | None = None,
+    on_event=None,
     **kw,
 ):
     """
@@ -35,12 +36,13 @@ def run_instrumented(
     @param task_description  NL-запрос.
     @param llm  LLMClient (None → MockLLMClient внутри run_pipeline).
     @param tracer  Tracer (None → глобальный StubTracer).
+    @param on_event  Опц. callback событий пайплайна (для SSE-streaming).
     @return SystemResult по контракту baseline (наблюдаемость ничего не меняет).
     """
     tracer = tracer or get_tracer()
     with tracer.trace("sql_security_pipeline", input=task_description) as tr:
         t0 = time.perf_counter()
-        res = run_pipeline(task_description, llm=llm, **kw)
+        res = run_pipeline(task_description, llm=llm, on_event=on_event, **kw)
         dt = time.perf_counter() - t0
 
         # ── метрики Prometheus ──

@@ -23,6 +23,7 @@ import re
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 _CATALOG = os.path.join(_ROOT, "data", "schema_catalog.json")
+_FEATURED = os.path.join(_ROOT, "data", "featured_tables.json")
 
 # стоп-слова (в prefix-5 форме) — глаголы-команды и предлоги, чтобы не шумели
 _STOP = {"показ", "выгру", "дай", "ähн", "все", "всех", "по", "для", "из", "на",
@@ -67,8 +68,14 @@ class SchemaLinker:
         семантически — да (риск ~ скоринг заявки).
     """
 
-    def __init__(self, catalog_path: str = _CATALOG):
+    def __init__(self, catalog_path: str = _CATALOG, featured_path: str = _FEATURED):
         cat = json.load(open(catalog_path, encoding="utf-8"))["tables"]
+        # featured (RAG-расширение): anchor-таблицы с business-описанием и boost'ом.
+        # Опционально — если файла нет, всё работает как раньше.
+        self.featured: dict[str, dict] = {}
+        if os.path.exists(featured_path):
+            raw = json.load(open(featured_path, encoding="utf-8"))
+            self.featured = {k: v for k, v in raw.items() if not k.startswith("_")}
         self.tables: dict[str, dict] = {}
         for t in cat:
             head = f"{t['name']} {t.get('comment') or ''}"
@@ -79,6 +86,12 @@ class SchemaLinker:
                             if (c.get("comment") or "").strip()
                             and (c.get("comment") or "").lower() not in {"name", "id", "create date"}]
             sem_text = f"{t['name']}. {t.get('comment') or ''}. " + " ".join(col_comments[:6])
+            # Для featured-таблиц добавим business_purpose и examples_nl в sem_text —
+            # эмбеддинг будет лучше matchить абстрактные NL-запросы («отчёт по клиентам»)
+            feat = self.featured.get(t["name"])
+            if feat:
+                sem_text += " " + feat.get("business_purpose", "")
+                sem_text += " " + " ".join(feat.get("examples_nl", []))
             self.tables[t["name"]] = {
                 "comment": t.get("comment") or "",
                 "columns": t["columns"],
@@ -86,7 +99,9 @@ class SchemaLinker:
                 "head_tok": _tokens(head),
                 "all_tok": _tokens(head + " " + body),
                 "sem_text": sem_text.strip(),
-                "sem_vec": None,                    # ленивая инициализация (см. _ensure_semantic)
+                "sem_vec": None,
+                "boost": float((feat or {}).get("boost", 1.0)),
+                "featured": feat,                   # None или dict — для DDL-блока
             }
         # embeddings-клиент: singleton. Если HF_TOKEN нет — available()==False, fallback лексика.
         try:
@@ -117,7 +132,10 @@ class SchemaLinker:
         return len(qt & info["all_tok"]) + 2 * len(qt & info["head_tok"])
 
     def rank(self, task: str, k: int = 6) -> list[tuple[str, float]]:
-        """@brief top-K таблиц по релевантности (имя, score>0). Семантика → лексика."""
+        """@brief top-K таблиц по релевантности (имя, score>0). Семантика → лексика.
+
+        Featured-таблицы получают boost к итоговому score (см. data/featured_tables.json).
+        """
         if self._ensure_semantic():
             qv = self._ec.embed(task)
             if qv is not None:
@@ -127,13 +145,13 @@ class SchemaLinker:
                     tv = info["sem_vec"]
                     if tv is None:
                         continue
-                    s = EmbeddingsClient.cosine(qv, tv)
+                    s = EmbeddingsClient.cosine(qv, tv) * info["boost"]
                     if s > 0:
                         scored.append((n, s))
                 return sorted(scored, key=lambda x: -x[1])[:k]
         # Лексический fallback
         qt = _tokens(task)
-        scored_lex = [(n, float(self._score(qt, i))) for n, i in self.tables.items()]
+        scored_lex = [(n, float(self._score(qt, i)) * i["boost"]) for n, i in self.tables.items()]
         return sorted([x for x in scored_lex if x[1] > 0], key=lambda x: -x[1])[:k]
 
     def link_dict(self, task: str, k: int = 6, fk_closure: bool = True) -> dict[str, list[str]]:
@@ -186,7 +204,23 @@ class SchemaLinker:
                     tail = ""
                 lines.append(f"  {c['name']} {_short_type(c['type'])},{tail}")
             head = f"CREATE TABLE {n} (" + (f"  -- {info['comment']}" if info["comment"] else "")
-            blocks.append(head + "\n" + "\n".join(lines) + "\n);")
+            block = head + "\n" + "\n".join(lines) + "\n);"
+            # Для featured-таблиц добавляем business-блок ПЕРЕД DDL —
+            # модель получает контекст: «что эта таблица в бизнесе»,
+            # «как обычно joinится», «какие колонки ключевые», NL-примеры.
+            feat = info.get("featured")
+            if feat:
+                ann = ["-- BUSINESS CONTEXT (RAG):"]
+                if feat.get("business_purpose"):
+                    ann.append(f"--   purpose: {feat['business_purpose']}")
+                if feat.get("key_columns"):
+                    ann.append(f"--   key cols: {', '.join(feat['key_columns'])}")
+                for j in feat.get("typical_joins", []):
+                    ann.append(f"--   join: {j['with']} ON {j['via']}  ({j.get('use','')})")
+                if feat.get("examples_nl"):
+                    ann.append("--   example NL: " + " | ".join(feat["examples_nl"][:3]))
+                block = "\n".join(ann) + "\n" + block
+            blocks.append(block)
         return "\n\n".join(blocks)
 
 

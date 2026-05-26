@@ -1,0 +1,99 @@
+{
+  "_meta": {
+    "purpose": "Анкер-таблицы банковского домена с расширенным контекстом для RAG.",
+    "how_loaded": "src/case3/schema/linker.py подгружает при инициализации; влияет на rank() и link_text().",
+    "boost_scale": "1.0 = нейтрально; 1.3 = ~30% бонус к score; типично 1.2-1.4."
+  },
+
+  "credit_contract": {
+    "business_purpose": "Центральная таблица кейса — кредитный договор клиент↔банк. Используется в большинстве задач: считать, фильтровать по статусу, агрегировать суммы, joinить с компаниями и сотрудниками.",
+    "key_columns": ["id", "credit_contract_number", "credit_amount", "loan_term", "status",
+                    "create_date", "link_customer_id", "sys_employee_id", "org_id"],
+    "typical_joins": [
+      {"with": "sys_company", "via": "credit_contract.link_customer_id = sys_company.id",
+       "use": "клиент-юрлицо (имя, ИНН, сегмент)"},
+      {"with": "sys_employee", "via": "credit_contract.sys_employee_id = sys_employee.id",
+       "use": "ответственный менеджер банка"}
+    ],
+    "examples_nl": [
+      "Сколько кредитных договоров?",
+      "Топ-N договоров по сумме кредита",
+      "Договоры со статусом 1",
+      "Имя компании-клиента для первых N договоров"
+    ],
+    "boost": 1.4
+  },
+
+  "sys_company": {
+    "business_purpose": "Каталог компаний-клиентов (юрлица). Используется при выводе имени клиента, отчётах по сегментам, фильтрации по ИНН.",
+    "key_columns": ["id", "name", "inn", "business_segment", "customer_type_id",
+                    "attr_email", "contact_phone", "create_date"],
+    "typical_joins": [
+      {"with": "business_segment", "via": "sys_company.business_segment = business_segment.id",
+       "use": "сегмент бизнеса клиента"},
+      {"with": "credit_contract", "via": "sys_company.id = credit_contract.link_customer_id",
+       "use": "договоры этой компании"}
+    ],
+    "examples_nl": [
+      "Сколько компаний в системе",
+      "Топ-N компаний по числу договоров",
+      "Компании с заполненным ИНН"
+    ],
+    "boost": 1.3
+  },
+
+  "sys_employee": {
+    "business_purpose": "Сотрудники банка (менеджеры, операторы). Используется чтобы привязать к договорам ответственных.",
+    "key_columns": ["id", "name", "org_id", "status", "create_date"],
+    "typical_joins": [
+      {"with": "credit_contract", "via": "sys_employee.id = credit_contract.sys_employee_id",
+       "use": "договоры менеджера"}
+    ],
+    "examples_nl": [
+      "Сколько всего сотрудников",
+      "Имя сотрудника-владельца договора"
+    ],
+    "boost": 1.2
+  },
+
+  "scp_application": {
+    "business_purpose": "СКП-заявки (Система Кредитного Процесса) — заявка клиента на кредит до договора. Используется для отчётов по входящим обращениям, конверсии заявок в договоры.",
+    "key_columns": ["id", "name", "scp_business_segment", "create_date", "status"],
+    "typical_joins": [
+      {"with": "business_segment", "via": "scp_application.scp_business_segment = business_segment.id",
+       "use": "сегмент заявки"}
+    ],
+    "examples_nl": [
+      "Сколько заявок",
+      "Количество заявок по сегменту бизнеса"
+    ],
+    "boost": 1.2
+  },
+
+  "business_segment": {
+    "business_purpose": "Справочник сегментов бизнеса (МСБ / Крупный / Розница и т.п.). Используется для группировки клиентов и отчётов.",
+    "key_columns": ["id", "name"],
+    "typical_joins": [
+      {"with": "sys_company", "via": "business_segment.id = sys_company.business_segment",
+       "use": "компании в сегменте"},
+      {"with": "scp_application", "via": "business_segment.id = scp_application.scp_business_segment",
+       "use": "заявки в сегменте"}
+    ],
+    "examples_nl": [
+      "Сколько сегментов бизнеса",
+      "Топ-N сегментов по числу компаний"
+    ],
+    "boost": 1.2
+  },
+
+  "scp_project_ans": {
+    "business_purpose": "СКП. Проект решения — широкая таблица (120 колонок) с финальными параметрами одобренного проекта.",
+    "key_columns": ["id", "name", "create_date"],
+    "typical_joins": [],
+    "examples_nl": [
+      "Сколько проектов решений",
+      "Топ-N проектов по id"
+    ],
+    "boost": 1.1
+  }
+}

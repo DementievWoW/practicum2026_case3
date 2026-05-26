@@ -25,7 +25,7 @@ import os
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from case3.infra import metrics as m
@@ -139,6 +139,19 @@ _UI_HTML = """<!doctype html>
   .answer-row { display:flex; gap:6px; margin-top:8px }
   .answer-row input { flex:1; background:#0d1117; color:var(--fg); border:1px solid #30363d;
                        border-radius:6px; padding:6px 10px; font:13px ui-monospace,Menlo,monospace }
+  /* thinking */
+  .think { font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--mut);
+           padding-left:24px; border-left:2px dashed #30363d; margin:6px 0 12px 4px }
+  .think .step { padding:3px 0; opacity:0; animation:fadeIn .25s forwards }
+  @keyframes fadeIn { to { opacity: 1 } }
+  .think .step.gen  { color:#79c0ff }
+  .think .step.aud  { color:#ffa657 }
+  .think .step.ref  { color:#d2a8ff }
+  .think .step.iter { color:var(--fg); font-weight:600; margin-top:6px }
+  .think .step.err  { color:var(--err) }
+  .think .step .t   { color:var(--mut); font-size:11px; margin-left:6px }
+  .think pre { background:#0d1117; padding:6px 10px; border-radius:4px;
+               margin:4px 0; max-height:100px; overflow:auto; font-size:11px }
 </style></head>
 <body><div class="wrap">
   <h1>SQL Security · Multi-Agent</h1>
@@ -159,6 +172,7 @@ _UI_HTML = """<!doctype html>
       <textarea id="task" placeholder="напр.: Удали старые черновики заявок"></textarea>
       <div class="row">
         <button id="go">Начать</button>
+        <button class="ghost" id="go-stream" title="показать поток мыслей пайплайна (SSE)">🧠 Live</button>
         <button class="ghost" id="reset" style="display:none">Сбросить диалог</button>
         <span class="chip" data-q="Сколько кредитных договоров?">агрегат</span>
         <span class="chip" data-q="Топ-5 компаний по числу договоров (count desc, name asc): name, count">join+top-N</span>
@@ -276,6 +290,129 @@ function resetDialog() {
 }
 $('#reset').onclick = resetDialog;
 
+// Рендер "thinking"-потока (SSE-события из pipeline)
+function appendThink(thinkEl, cls, text, time_s) {
+  const t = time_s != null ? `<span class="t">${time_s.toFixed(1)}s</span>` : '';
+  thinkEl.insertAdjacentHTML('beforeend',
+    `<div class="step ${cls}">${text} ${t}</div>`);
+  msgs.scrollIntoView({behavior:'smooth', block:'end'});
+}
+
+// Live-режим только когда нет clarify-истории (первый ход).
+// SSE рисует поток мыслей, в конце даёт финальный SQL.
+async function sendStream() {
+  out.innerHTML = '';
+  // bubble для thinking-стрима
+  const bot = renderBot('<b>🧠 thinking…</b><div class="think" id="think-box"></div>', 'bot');
+  const thinkEl = bot.querySelector('#think-box');
+  const t0 = performance.now();
+  let finalEv = null;
+
+  try {
+    const r = await fetch('/chat/stream', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({task: _task, history: []})
+    });
+    if (!r.ok || !r.body) {
+      appendThink(thinkEl, 'err', `HTTP ${r.status}`);
+      return;
+    }
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, {stream:true});
+      let nl;
+      while ((nl = buf.indexOf('\n\n')) !== -1) {
+        const chunk = buf.slice(0, nl);
+        buf = buf.slice(nl + 2);
+        if (!chunk.startsWith('data: ')) continue;
+        const ev = JSON.parse(chunk.slice(6));
+        const dt = (performance.now() - t0) / 1000;
+        if (ev.event === 'nl_warnings') {
+          renderWarnings(ev.warnings);
+        } else if (ev.event === 'iter_start') {
+          appendThink(thinkEl, 'iter', `── Итерация ${ev.iteration} ──`, dt);
+        } else if (ev.event === 'generator_start') {
+          const lessons = (ev.lessons && ev.lessons.length)
+            ? ` (учтены уроки: ${ev.lessons.length})` : '';
+          appendThink(thinkEl, 'gen', `🧮 генератор пишет SQL${lessons}…`, dt);
+        } else if (ev.event === 'generator_done') {
+          appendThink(thinkEl, 'gen', `✓ SQL готов <pre>${esc(ev.sql.slice(0,300))}</pre>`, dt);
+        } else if (ev.event === 'auditor_start') {
+          appendThink(thinkEl, 'aud', `🛡 аудитор проверяет…`, dt);
+        } else if (ev.event === 'auditor_done') {
+          const v = ev.vulnerabilities || [];
+          const ok = ev.approved ? '<span class="ok">approved</span>' : '<span class="err">rejected</span>';
+          const vlist = v.length ? ' · ' + v.map(x => `${x.vuln_class}(${x.risk_score.toFixed(1)})`).join(', ') : '';
+          appendThink(thinkEl, 'aud', `${ok} · риск ${ev.risk.toFixed(1)}${vlist}`, dt);
+        } else if (ev.event === 'reflector_start') {
+          appendThink(thinkEl, 'ref', `🧠 reflection пишет урок…`, dt);
+        } else if (ev.event === 'reflector_done') {
+          const ls = (ev.lessons || []).map(esc).join('<br>');
+          appendThink(thinkEl, 'ref', `✓ урок: ${ls || '—'}`, dt);
+        } else if (ev.event === 'final') {
+          finalEv = ev;
+        } else if (ev.event === 'error') {
+          appendThink(thinkEl, 'err', `error: ${esc(ev.message)}`, dt);
+        }
+      }
+    }
+  } catch (e) {
+    appendThink(thinkEl, 'err', `network error: ${esc(e.message)}`);
+    return;
+  }
+
+  // Финал: показываем карточки SQL / vulns / audit_log
+  if (!finalEv) return;
+  _lastSQL = finalEv.final_sql;
+  _lastApproved = finalEv.approved;
+  const verdict = finalEv.approved
+    ? '<span class="ok">✓ approved</span>'
+    : '<span class="err">✗ rejected</span>';
+  const traj = (finalEv.risk_trajectory || []).map(x => x.toFixed(1)).join(' → ');
+  renderBot(`SQL готов · ${verdict} · итераций <b>${finalEv.iterations_used}</b>
+             · риск <b>${traj}</b>`);
+  const vulnsHtml = (finalEv.vulnerabilities || []).map(v => `
+    <div class="vuln ${v.risk_score < 4 ? 'low':''}">
+      <b>${esc(v.vuln_class)}</b> · risk ${v.risk_score.toFixed(1)}<br>
+      ${esc(v.description)}<br>
+      <small class="ok">↳ ${esc(v.recommendation || '')}</small>
+    </div>`).join('') || '<div class="ok">⚑ уязвимостей не найдено</div>';
+  const runBtn = finalEv.approved
+    ? '<button id="run-sql">Выполнить на demo_db →</button>'
+    : '<button class="ghost" disabled>SQL отклонён аудитором — выполнить нельзя</button>';
+  const traceId = finalEv.trace_id;
+  const traceLink = traceId
+    ? `<a href="http://localhost:13001/trace/${traceId}" target="_blank">
+         <button class="ghost">Открыть trace ${traceId.slice(0,8)} →</button></a>` : '';
+  out.innerHTML = `
+    <div class="card">
+      <div class="label">Финальный SQL</div>
+      <pre>${esc(finalEv.final_sql)}</pre>
+      <div class="row">${runBtn} ${traceLink}</div>
+    </div>
+    <div class="card">
+      <div class="label">Уязвимости (последняя итерация)</div>
+      ${vulnsHtml}
+    </div>
+    <div class="card">
+      <div class="label">Audit log</div>
+      <pre>${esc(finalEv.audit_log)}</pre>
+    </div>
+    <div id="run-out"></div>`;
+  if (traceId) {
+    $('#lf-hint').innerHTML = `последний trace: <a href="http://localhost:13001/trace/${traceId}" target="_blank">${traceId.slice(0,8)}</a>`;
+    $('#lf-hint').className = 'ok';
+    $('#langfuse-frame').src = `http://localhost:13001/trace/${traceId}`;
+  }
+  const runBtnEl = $('#run-sql');
+  if (runBtnEl) runBtnEl.onclick = runApprovedSQL;
+  $('#reset').style.display = '';
+}
+
 // ── отправить очередной ход в /chat ──
 async function sendChat(answer /* optional — текстовый ответ юзера на clarify */) {
   if (answer) {
@@ -379,9 +516,20 @@ $('#go').onclick = () => {
   if (!t) return;
   resetDialog();
   _task = t;
-  $('#task').value = t;            // не стираем — пусть видно
+  $('#task').value = t;
   renderUser(t);
   sendChat();
+};
+
+// ── Live-режим: SSE с потоком мыслей (без clarify) ──
+$('#go-stream').onclick = () => {
+  const t = $('#task').value.trim();
+  if (!t) return;
+  resetDialog();
+  _task = t;
+  $('#task').value = t;
+  renderUser(t);
+  sendStream();
 };
 
 async function runApprovedSQL() {
@@ -639,6 +787,90 @@ def chat(req: ChatRequest) -> ChatResponse:
         metadata=res.metadata,
         nl_warnings=nl_warnings,
     )
+
+
+# ─── /chat/stream: SSE-стрим этапов пайплайна (live thinking) ───────────────
+# Возвращает text/event-stream. UI парсит через fetch+ReadableStream.
+# Каждое событие — JSON-объект с полем "event": iter_start / generator_start /
+# generator_done / auditor_done / reflector_done / final.
+#
+# Pipeline.run() — синхронный (тяжёлые LLM-вызовы). Запускаем его в
+# threadpool через run_in_executor, шлём события через asyncio.Queue,
+# event loop FastAPI не блокируется и SSE-чанки уходят в браузер по мере
+# появления.
+@app.post("/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """@brief SSE-стрим этапов pipeline'а — для 'thinking' UI."""
+    import asyncio
+
+    # NL-валидация — первым событием
+    nl_warnings: list[dict] = []
+    try:
+        from case3.audit.nl_validator import validate_nl
+        for w in validate_nl(req.task):
+            nl_warnings.append({
+                "code": w.code, "severity": w.severity,
+                "message": w.message, "hint": w.hint
+            })
+    except Exception:
+        pass
+
+    # Расширим task ответами пользователя из history
+    final_task = req.task
+    for h in req.history:
+        if h.role == "user" and h.content:
+            final_task += f"\nУточнение: {h.content}"
+
+    loop = asyncio.get_running_loop()
+    q: "asyncio.Queue[dict]" = asyncio.Queue()
+    SENTINEL = object()
+
+    def emit_threadsafe(ev: dict) -> None:
+        # вызывается из worker-потока pipeline; шлём в event-loop коректно
+        loop.call_soon_threadsafe(q.put_nowait, ev)
+
+    def worker_blocking() -> None:
+        try:
+            res = run_instrumented(final_task, on_event=emit_threadsafe)
+            last_audit = res.iterations_log[-1].audit_result if res.iterations_log else None
+            emit_threadsafe({
+                "event": "final",
+                "approved": res.approved,
+                "iterations_used": res.iterations_used,
+                "risk_trajectory": res.metadata.get("risk_trajectory", []),
+                "final_sql": res.final_sql,
+                "audit_log": res.audit_log,
+                "trace_id": res.metadata.get("trace_id"),
+                "vulnerabilities": [
+                    {"vuln_class": v.vuln_class, "risk_score": v.risk_score,
+                     "description": v.description,
+                     "recommendation": v.recommendation}
+                    for v in (last_audit.vulnerabilities if last_audit else [])
+                ],
+            })
+        except Exception as e:
+            emit_threadsafe({"event": "error", "message": str(e)})
+        finally:
+            loop.call_soon_threadsafe(q.put_nowait, SENTINEL)
+
+    async def stream():
+        # NL-warnings первыми
+        if nl_warnings:
+            yield "data: " + _json.dumps(
+                {"event": "nl_warnings", "warnings": nl_warnings},
+                ensure_ascii=False) + "\n\n"
+        # запускаем pipeline в threadpool
+        loop.run_in_executor(None, worker_blocking)
+        while True:
+            ev = await q.get()
+            if ev is SENTINEL:
+                break
+            yield "data: " + _json.dumps(ev, ensure_ascii=False) + "\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no",
+                                      "Connection": "keep-alive"})
 
 
 # ─── /run-sql: исполнить approved SQL на demo_db ────────────────────────────

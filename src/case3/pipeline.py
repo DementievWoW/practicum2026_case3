@@ -48,7 +48,15 @@ class SQLSecurityPipeline(SQLSecuritySystem):
         )
         self.reflector = reflector or Reflector()
 
-    def run(self, task_description: str) -> SystemResult:
+    def run(self, task_description: str, on_event=None) -> SystemResult:
+        """@brief Цикл генератор→судья→reflector.
+
+        @param on_event Опц. callback(dict) — вызывается на ключевых шагах
+                        пайплайна. Используется SSE-endpoint'ом для
+                        live-streaming мыслей в UI. Если None — поведение
+                        как раньше.
+        """
+        emit = on_event or (lambda ev: None)
         sql_history: list[str] = []
         iterations_log: list[IterationLog] = []
         reflection = []  # list[Lesson] — растёт между итерациями
@@ -56,7 +64,11 @@ class SQLSecurityPipeline(SQLSecuritySystem):
         last_audit = None
 
         for it in range(1, self.max_iterations + 1):
+            emit({"event": "iter_start", "iteration": it})
+
             # 1. Генерация (с reflection-памятью)
+            emit({"event": "generator_start", "iteration": it,
+                  "lessons": [str(l) for l in reflection]})
             sql = self.generator.generate(
                 task_description=task_description,
                 sql_history=sql_history,
@@ -65,10 +77,20 @@ class SQLSecurityPipeline(SQLSecuritySystem):
                 reflection=reflection,
             )
             sql_history.append(sql)
+            emit({"event": "generator_done", "iteration": it, "sql": sql})
 
             # 2. Аудит
+            emit({"event": "auditor_start", "iteration": it})
             audit = self.auditor.audit(sql)
             last_sql, last_audit = sql, audit
+            emit({"event": "auditor_done", "iteration": it,
+                  "approved": audit.approved,
+                  "risk": audit.overall_risk_score,
+                  "vulnerabilities": [
+                      {"vuln_class": v.vuln_class, "risk_score": v.risk_score,
+                       "description": v.description}
+                      for v in audit.vulnerabilities
+                  ]})
 
             # 3. Лог итерации
             revision = ""
@@ -87,7 +109,10 @@ class SQLSecurityPipeline(SQLSecuritySystem):
                 break
 
             # 5. Reflection — формируем уроки на следующую итерацию
+            emit({"event": "reflector_start", "iteration": it})
             reflection = self.reflector.reflect(audit, reflection)
+            emit({"event": "reflector_done", "iteration": it,
+                  "lessons": [str(l) for l in reflection]})
 
         # Сборка человекочитаемого лога
         audit_log = self._render_log(iterations_log)
@@ -132,10 +157,12 @@ def run_pipeline(
     llm=None,
     db_schema: dict | None = None,
     max_iterations: int | None = None,
+    on_event=None,
 ) -> SystemResult:
     """
     @brief Собирает узлы (на моках по умолчанию) и прогоняет цикл.
     @param llm  LLMClient; если None — MockLLMClient(scenario="evolve").
+    @param on_event Опц. callback для SSE-streaming (см. SQLSecurityPipeline.run).
     @return SystemResult по контракту baseline.
     """
     if llm is None:
@@ -167,4 +194,4 @@ def run_pipeline(
     auditor = HybridAuditor(llm=llm, store=store)
     reflector = Reflector()
     pipeline = SQLSecurityPipeline(generator, auditor, reflector, max_iterations)
-    return pipeline.run(task_description)
+    return pipeline.run(task_description, on_event=on_event)
