@@ -62,6 +62,22 @@ def run_instrumented(
         )
         tr.score("final_risk", float(traj[-1]))
         tr.score("approved", 1.0 if res.approved else 0.0)
+
+        # пробросим trace_id в metadata — UI делает deep-link на Langfuse
+        tid = None
+        for attr_path in ("_tr.id", "_tr.trace_id", "id"):
+            o = tr
+            ok = True
+            for p in attr_path.split("."):
+                o = getattr(o, p, None)
+                if o is None:
+                    ok = False
+                    break
+            if ok and isinstance(o, str):
+                tid = o
+                break
+        if tid:
+            res.metadata["trace_id"] = tid
     return res
 
 
