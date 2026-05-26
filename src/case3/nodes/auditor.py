@@ -263,6 +263,20 @@ def run_phase1(sql: str) -> list[Finding]:
         findings.extend(_schema_findings(sql_clean))
     except Exception:
         pass
+    # Schema-validator (мульти-чекер): ловим галлюцинации модели — таблицы/колонки,
+    # которых нет в каталоге. independent от regex-правил, доп. сигнал в Phase 1.
+    try:
+        from case3.audit.schema_validator import validate as _schema_validate
+        findings.extend(_schema_validate(sql_clean))
+    except Exception:
+        pass
+    # AST-чекер (мульти-чекер): pglast-парсер от Postgres'а. Точнее regex
+    # на CTE/подзапросах. PARSE_ERROR на невалидном SQL, JOIN без ON, subq без LIMIT.
+    try:
+        from case3.audit.ast_checker import check as _ast_check
+        findings.extend(_ast_check(sql_clean))
+    except Exception:
+        pass
     return findings
 
 

@@ -15,3 +15,7 @@ pydantic>=2.0
 # Langfuse — реальный трейсинг (опционально, fallback на StubTracer внутри tracing.py)
 # Пинимся на v2: совместима с self-host Langfuse v2 в нашем compose-стеке.
 langfuse>=2.0,<3
+
+# pglast — Python binding к libpg_query (Postgres parser). Нужен AST-валидатору
+# (src/case3/audit/ast_checker.py). Если не установлен — graceful skip.
+pglast>=6.0

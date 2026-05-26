@@ -118,6 +118,23 @@ KNOWLEDGE: dict[str, Knowledge] = {
         "Не возвращать запросы к pg_*/information_schema из NL-интерфейса для конечных "
         "пользователей. Для админ-задач — отдельный канал и аудит.",
     ),
+    "SCHEMA_HALLUCINATION": Knowledge(
+        "SCHEMA_HALLUCINATION", "Несуществующие таблицы/колонки (галлюцинация модели)",
+        ["CWE-1284"], [], "OWASP A04:2021-Insecure Design",
+        "Модель сослалась на таблицу/колонку, которой нет в каталоге БД. "
+        "На реальной БД упадёт; для пользователя выглядит как 'обещали отчёт, "
+        "а ничего нет'. Иногда — попытка достучаться до соседних БД.",
+        "Schema linker → DAIL Code-Repr DDL в промпте; few-shot positive с реальными "
+        "именами; validator против data/schema_catalog.json до approve.",
+    ),
+    "PARSE_ERROR": Knowledge(
+        "PARSE_ERROR", "Невалидный SQL (не парсится Postgres'ом)",
+        ["CWE-1284"], [], "OWASP A04:2021-Insecure Design",
+        "Postgres parser отверг SQL: синтаксис, скобки, кавычки. Запрос точно "
+        "не исполнится; для пользователя это «обещали данные, а ничего нет».",
+        "Retry с reflection-уроком, что синтаксис некорректен; LLM проверяет "
+        "ответ через pglast перед выдачей.",
+    ),
 }
 
 
