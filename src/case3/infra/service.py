@@ -139,6 +139,17 @@ _UI_HTML = """<!doctype html>
   .answer-row { display:flex; gap:6px; margin-top:8px }
   .answer-row input { flex:1; background:#0d1117; color:var(--fg); border:1px solid #30363d;
                        border-radius:6px; padding:6px 10px; font:13px ui-monospace,Menlo,monospace }
+  /* feedback */
+  .fb-btn { background:#21262d; border:1px solid #30363d; color:var(--fg);
+            padding:8px 14px; border-radius:6px; cursor:pointer; font-size:14px;
+            transition:all .15s }
+  .fb-btn:hover { border-color:var(--accent) }
+  .fb-btn.up.active { background:#1a4a2a; border-color:var(--ok); color:var(--ok) }
+  .fb-btn.down.active { background:#4a1a1a; border-color:var(--err); color:var(--err) }
+  .fb-comment { width:100%; margin-top:8px; background:#0d1117; color:var(--fg);
+                border:1px solid #30363d; border-radius:6px; padding:8px 10px;
+                font:13px ui-monospace,Menlo,monospace; min-height:50px; resize:vertical }
+  .fb-thanks { color:var(--ok); font-size:13px; margin-top:8px }
   /* thinking */
   .think { font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--mut);
            padding-left:24px; border-left:2px dashed #30363d; margin:6px 0 12px 4px }
@@ -420,7 +431,8 @@ async function sendStream() {
       <div class="label">Audit log</div>
       <pre>${esc(finalEv.audit_log)}</pre>
     </div>
-    <div id="run-out"></div>`;
+    <div id="run-out"></div>
+    ${renderFeedback(finalEv)}`;
   if (traceId) {
     $('#lf-hint').innerHTML = `последний trace: <a href="http://localhost:13001/trace/${traceId}" target="_blank">${traceId.slice(0,8)}</a>`;
     $('#lf-hint').className = 'ok';
@@ -428,6 +440,7 @@ async function sendStream() {
   }
   const runBtnEl = $('#run-sql');
   if (runBtnEl) runBtnEl.onclick = runApprovedSQL;
+  bindFeedback(finalEv);
   $('#reset').style.display = '';
 }
 
@@ -514,7 +527,8 @@ async function sendChat(answer /* optional — текстовый ответ ю�
         <div class="label">Audit log</div>
         <pre>${esc(d.audit_log)}</pre>
       </div>
-      <div id="run-out"></div>`;
+      <div id="run-out"></div>
+      ${renderFeedback(d)}`;
     if (traceId) {
       $('#lf-hint').innerHTML = `последний trace: <a href="http://localhost:13001/trace/${traceId}" target="_blank">${traceId.slice(0,8)}</a>`;
       $('#lf-hint').className = 'ok';
@@ -522,6 +536,7 @@ async function sendChat(answer /* optional — текстовый ответ ю�
     }
     const runBtnEl = $('#run-sql');
     if (runBtnEl) runBtnEl.onclick = runApprovedSQL;
+    bindFeedback(d);
     $('#reset').style.display = '';
   } catch (e) {
     out.innerHTML = `<div class="card err">network error: ${esc(e.message)}</div>`;
@@ -551,6 +566,65 @@ if (_stream_btn) _stream_btn.onclick = () => {
   renderUser(t);
   sendStream();
 };
+
+// ── feedback (👍/👎 + комментарий) ──
+function renderFeedback(d) {
+  return `
+    <div class="card" id="fb-card">
+      <div class="label">Оцените результат</div>
+      <div class="row" style="margin-top:8px">
+        <button class="fb-btn up"   data-rating="up">👍 Сработал</button>
+        <button class="fb-btn down" data-rating="down">👎 Не сработал</button>
+      </div>
+      <textarea class="fb-comment" id="fb-comment"
+                placeholder="опц.: что не так / что улучшить (для дообучения)"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button id="fb-send" disabled>Отправить отзыв</button>
+        <small style="color:var(--mut)">данные пишутся в data/feedback.jsonl + Langfuse score</small>
+      </div>
+    </div>`;
+}
+
+function bindFeedback(d) {
+  const card = $('#fb-card');
+  if (!card) return;
+  let chosen = null;
+  card.querySelectorAll('.fb-btn').forEach(b => {
+    b.onclick = () => {
+      card.querySelectorAll('.fb-btn').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      chosen = b.dataset.rating;
+      $('#fb-send').disabled = false;
+    };
+  });
+  $('#fb-send').onclick = async () => {
+    if (!chosen) return;
+    const btn = $('#fb-send');
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+      const r = await fetch('/feedback', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          task: _task,
+          final_sql: d.final_sql,
+          rating: chosen,
+          comment: $('#fb-comment').value.trim() || null,
+          trace_id: d.trace_id || null,
+          iterations_used: d.iterations_used,
+          approved: d.approved,
+        })
+      });
+      const j = await r.json();
+      const langSync = j.langfuse_synced ? ' (+ Langfuse score)' : '';
+      card.innerHTML = `<div class="fb-thanks">✓ спасибо за отзыв${langSync}</div>`;
+    } catch (e) {
+      btn.disabled = false; btn.textContent = 'Отправить отзыв';
+      card.insertAdjacentHTML('beforeend',
+        `<div class="err" style="margin-top:8px">network error: ${esc(e.message)}</div>`);
+    }
+  };
+}
 
 async function runApprovedSQL() {
   if (!_lastSQL || !_lastApproved) return;
@@ -891,6 +965,83 @@ async def chat_stream(req: ChatRequest):
                              headers={"Cache-Control": "no-cache",
                                       "X-Accel-Buffering": "no",
                                       "Connection": "keep-alive"})
+
+
+# ─── /feedback: оценка финального SQL — RLHF-датасет + Langfuse score ──────
+# Складывается в data/feedback.jsonl. Если есть LANGFUSE_PUBLIC_KEY и trace_id —
+# параллельно посылается score в Langfuse (filterable в UI: thumbs_up / down).
+_FEEDBACK_LOG = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))),
+    "data", "feedback.jsonl")
+
+
+class FeedbackRequest(BaseModel):
+    task: str = Field(..., min_length=1, max_length=2000)
+    final_sql: str | None = None
+    rating: str = Field(..., pattern="^(up|down)$",
+                        description="up = сработал, down = не сработал")
+    comment: str | None = Field(None, max_length=1000)
+    trace_id: str | None = None
+    iterations_used: int | None = None
+    approved: bool | None = None
+
+
+class FeedbackResponse(BaseModel):
+    ok: bool
+    langfuse_synced: bool
+
+
+def _persist_feedback(req: FeedbackRequest) -> None:
+    """@brief Запись в data/feedback.jsonl — RLHF/eval-данные."""
+    import datetime
+    import logging
+    import uuid
+    try:
+        os.makedirs(os.path.dirname(_FEEDBACK_LOG), exist_ok=True)
+        with open(_FEEDBACK_LOG, "a", encoding="utf-8") as f:
+            f.write(_json.dumps({
+                "id": uuid.uuid4().hex[:12],
+                "ts": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                **req.model_dump(exclude_none=True),
+            }, ensure_ascii=False) + "\n")
+    except Exception as e:
+        logging.getLogger("uvicorn.error").warning("feedback persist failed: %r", e)
+
+
+def _sync_langfuse_score(req: FeedbackRequest) -> bool:
+    """@brief Послать score в Langfuse (если ключи есть и trace_id известен)."""
+    if not req.trace_id:
+        return False
+    if not (os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY")):
+        return False
+    try:
+        from langfuse import Langfuse
+        lf = Langfuse(
+            public_key=os.environ["LANGFUSE_PUBLIC_KEY"],
+            secret_key=os.environ["LANGFUSE_SECRET_KEY"],
+            host=os.environ.get("LANGFUSE_HOST", "http://langfuse:3000"),
+        )
+        # score: 1.0 = сработал, 0.0 = не сработал
+        lf.score(trace_id=req.trace_id,
+                 name="user_thumbs",
+                 value=1.0 if req.rating == "up" else 0.0,
+                 comment=req.comment or "")
+        lf.flush()
+        return True
+    except Exception as e:
+        import logging
+        logging.getLogger("uvicorn.error").warning(
+            "langfuse score sync failed: %r", e)
+        return False
+
+
+@app.post("/feedback", response_model=FeedbackResponse)
+def feedback(req: FeedbackRequest) -> FeedbackResponse:
+    """@brief Оценка финального SQL пользователем (для RLHF/обучения и Langfuse UI)."""
+    _persist_feedback(req)
+    synced = _sync_langfuse_score(req)
+    return FeedbackResponse(ok=True, langfuse_synced=synced)
 
 
 # ─── /run-sql: исполнить approved SQL на demo_db ────────────────────────────

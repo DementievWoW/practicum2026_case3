@@ -42,3 +42,4 @@ secrets/
 .DS_Store
 Thumbs.db
 data/clarifications.jsonl
+data/feedback.jsonl
