@@ -174,8 +174,12 @@ def run_sql(conn, sql: str, ordered: bool):
 
 def main():
     llm = make_llm()
-    conn = psycopg2.connect(host="localhost", port="5432", dbname="demo_db",
-                            user="distr_user", password="pass")
+    # DB-параметры через env (compose-стек слушает 15432, локальная PG разработки — 5432).
+    conn = psycopg2.connect(host=os.getenv("DB_HOST", "localhost"),
+                            port=os.getenv("DB_PORT", "5432"),
+                            dbname=os.getenv("DB_NAME", "demo_db"),
+                            user=os.getenv("DB_USER", "distr_user"),
+                            password=os.getenv("DB_PASSWORD", "pass"))
     print(f"LLM: {llm.model if hasattr(llm,'model') else type(llm).__name__}")
     print(f"задач: {len(EVAL)}\n" + "=" * 86)
     cat_stat = {"A": [0, 0], "B": [0, 0], "C": [0, 0], "D": [0, 0]}

@@ -35,11 +35,12 @@ class LLMGenerator(SQLGenerator):
     """
 
     def __init__(self, llm: LLMClient, db_schema: dict | None = None,
-                 store=None, k_shots: int = 3, **kwargs):
+                 store=None, k_shots: int = 3, calibration_hints: bool = True, **kwargs):
         super().__init__(db_schema=db_schema, **kwargs)
         self.llm = llm
         self.store = store
         self.k_shots = k_shots
+        self.calibration_hints = calibration_hints
 
     def _schema_block(self) -> str:
         """@brief Компактное описание схемы для промпта (строка / dict / Table-объекты)."""
@@ -75,6 +76,30 @@ class LLMGenerator(SQLGenerator):
             lines.append(f"-- {ex.nl}\n{ex.sql}")
         return "\n".join(lines)
 
+    # ── Negative-калибровка: компактный список того, что аудитор откинет.
+    # Каждая строка соответствует регексу Phase-1 (R001..R013) в audit/auditor.py.
+    # Отдаём генератору ДО первой попытки → не приходится править на ретрае.
+    _CALIBRATION_HINTS = (
+        "\n\n### Запрещённые паттерны (аудитор отклонит — НЕ используй):\n"
+        "- R001 SELECT * — перечисляй колонки явно (`SELECT id, name, ...`).\n"
+        "- R002/R003 UPDATE/DELETE без WHERE (или WHERE 1=1) — массовая порча.\n"
+        "- R004 SELECT без LIMIT И без WHERE — это безусловный дамп (DoS).\n"
+        "- R005 UNION SELECT NULL,... и UNION к pg_catalog / information_schema.\n"
+        "- R006 pg_sleep() — time-based blind injection.\n"
+        "- R007 SECURITY DEFINER без SET search_path = pg_catalog, pg_temp.\n"
+        "- R008 декартово (запятая в FROM без JOIN..ON), LIKE '%...', функция от "
+        "колонки в WHERE (lower/upper/substr), OFFSET ≥ 1000.\n"
+        "- R009 чувствительные колонки (passport/snils/inn/phone/email/check_account/"
+        "card/cvv) сырыми — только агрегаты (count/sum) или маскирование "
+        "`LEFT(col,4)||'***'` / `digest(col,'sha256')`.\n"
+        "- R011 конкатенация ввода в SQL-литералы — параметризуй ($1).\n"
+        "- R012/R013 EXECUTE с `||` или `format('...%s', var)` — используй "
+        "`EXECUTE '...' USING $1` / `%L` для литералов, `%I` для идентификаторов.\n"
+    )
+
+    def _security_hints_block(self) -> str:
+        return self._CALIBRATION_HINTS if self.calibration_hints else ""
+
     def _system_prompt(self, reflection: list[Lesson], task_description: str) -> str:
         base = (
             "Ты — генератор PostgreSQL-запросов по описанию задачи и схеме БД. "
@@ -84,6 +109,7 @@ class LLMGenerator(SQLGenerator):
             "по grouped-колонке типа name, НЕ по id). Иначе результат недетерминирован. "
             "Для join используй FK-связи из комментариев схемы (поля `-- FK:tbl.col`)."
         )
+        base += self._security_hints_block()
         base += self._schema_block()
         base += self._fewshot_block(task_description)
         if reflection:
