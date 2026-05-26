@@ -232,6 +232,21 @@ _UI_HTML = """<!doctype html>
 </div>
 
 <script>
+// Глобальный обработчик ошибок: рисуем баннер сверху, чтобы видеть
+// JS-ошибки даже без открытой DevTools. Полезно для коллег-новичков.
+window.addEventListener('error', e => {
+  const banner = document.getElementById('js-err-banner') || (() => {
+    const b = document.createElement('div');
+    b.id = 'js-err-banner';
+    b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;'
+                    + 'background:#f85149;color:#fff;padding:10px;font:13px monospace;'
+                    + 'max-height:200px;overflow:auto';
+    document.body.prepend(b);
+    return b;
+  })();
+  banner.textContent = `JS ERROR: ${e.message} @ ${e.filename}:${e.lineno}:${e.colno}`;
+});
+
 const $ = s => document.querySelector(s);
 const $$ = s => document.querySelectorAll(s);
 const out = $('#out');
@@ -288,7 +303,8 @@ function resetDialog() {
   $('#task').value = '';
   $('#reset').style.display = 'none';
 }
-$('#reset').onclick = resetDialog;
+const _reset_btn = $('#reset');
+if (_reset_btn) _reset_btn.onclick = resetDialog;
 
 // Рендер "thinking"-потока (SSE-события из pipeline)
 function appendThink(thinkEl, cls, text, time_s) {
@@ -511,7 +527,8 @@ async function sendChat(answer /* optional — текстовый ответ ю�
 }
 
 // ── старт нового диалога ──
-$('#go').onclick = () => {
+const _go_btn = $('#go');
+if (_go_btn) _go_btn.onclick = () => {
   const t = $('#task').value.trim();
   if (!t) return;
   resetDialog();
@@ -522,7 +539,8 @@ $('#go').onclick = () => {
 };
 
 // ── Live-режим: SSE с потоком мыслей (без clarify) ──
-$('#go-stream').onclick = () => {
+const _stream_btn = $('#go-stream');
+if (_stream_btn) _stream_btn.onclick = () => {
   const t = $('#task').value.trim();
   if (!t) return;
   resetDialog();
