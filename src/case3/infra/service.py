@@ -719,8 +719,12 @@ async function bindPredictionCard(sql, traceId) {
       if (tog.checked) {
         block.innerHTML = renderHelpBlock(sql);
         block.style.display = '';
-        const btn = $('#pc-report-btn');
-        if (btn) btn.onclick = submitTimingReport;
+        const reportBtn = $('#pc-report-btn');
+        if (reportBtn) reportBtn.onclick = submitTimingReport;
+        const sbRun = $('#sb-run');
+        if (sbRun) sbRun.onclick = runSandboxSQL;
+        const sbFill = $('#sb-fill');
+        if (sbFill) sbFill.onclick = () => { const t = $('#sb-sql'); if (t) t.value = sql; };
       } else {
         block.style.display = 'none';
       }
@@ -728,47 +732,113 @@ async function bindPredictionCard(sql, traceId) {
   }
 }
 function renderHelpBlock(sql) {
-  const tbl = _firstTable(sql);
-  const sqlEsc = esc(sql);
+  // Песочница: пустой textarea → юзер пастит свой SQL (можно с EXPLAIN ANALYZE),
+  // жмёт «Выполнить», смотрит реальное время и руками переносит в отчёт.
   return `
-    <div class="label">Запустите на своей боевой БД <b>любой</b> из двух вариантов</div>
+    <div class="label">🧪 Тестовая БД (имитация prod-нагрузки)</div>
     <div style="font-size:12px;color:var(--mut);margin-bottom:8px">
-      Оба варианта замеряют реальное время. Первый проще, второй точнее (агрегат по N прогонам).
+      Вставь сюда SQL и запусти. Поддерживается <b>EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) …</b> —
+      Postgres вернёт реальное время выполнения и per-op разбивку.
     </div>
-
-    <div style="font-size:13px;color:var(--fg);margin-top:10px"><b>A) EXPLAIN ANALYZE</b> — один прогон, точное время + per-op:</div>
-    <div class="pc-snippet"><span class="kw">EXPLAIN</span> (<span class="kw">ANALYZE</span>, <span class="kw">BUFFERS</span>, <span class="kw">FORMAT</span> <span class="kw">JSON</span>)
-${sqlEsc};</div>
-
-    <div style="font-size:13px;color:var(--fg);margin-top:10px"><b>B) pg_stat_statements</b> — агрегат по предыдущим прогонам (требует расширения):</div>
-    <div class="pc-snippet"><span class="cm">-- 1) сначала запустите ваш SQL хотя бы один раз:</span>
-${sqlEsc};
-
-<span class="cm">-- 2) затем — статистика:</span>
-<span class="kw">SELECT</span> calls,
-       round(mean_exec_time::numeric, 2)  <span class="kw">AS</span> mean_ms,
-       round(total_exec_time::numeric, 2) <span class="kw">AS</span> total_ms,
-       round(mean_plan_time::numeric, 2)  <span class="kw">AS</span> plan_ms
-  <span class="kw">FROM</span> pg_stat_statements
- <span class="kw">WHERE</span> query <span class="kw">ILIKE</span> <span class="cm">'%${esc(tbl)}%'</span>
- <span class="kw">ORDER BY</span> calls <span class="kw">DESC</span>
- <span class="kw">LIMIT</span> 5;</div>
-
-    <div class="pc-report">
-      <span class="label" style="margin:0">Реальное время:</span>
-      <input type="number" id="pc-real-ms" placeholder="мс" step="0.1" min="0">
-      <select id="pc-source" style="background:#0d1117;color:var(--fg);border:1px solid #30363d;border-radius:6px;padding:6px 8px;font:13px Menlo,monospace">
-        <option value="explain_analyze">из EXPLAIN ANALYZE</option>
-        <option value="pg_stat_statements">из pg_stat_statements</option>
-        <option value="manual">руками (psql \\timing)</option>
-      </select>
-      <button id="pc-report-btn">Отправить отчёт</button>
-      <span id="pc-report-result" style="font-size:12px"></span>
+    <textarea id="sb-sql" rows="5" placeholder="Вставьте SQL (например: EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT count(*) FROM credit_contract;)" style="width:100%;background:#0d1117;color:var(--fg);border:1px solid #30363d;border-radius:6px;padding:10px;font:13px ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical"></textarea>
+    <div class="row" style="margin-top:8px">
+      <button id="sb-run">Выполнить на тестовой БД</button>
+      <button class="ghost" id="sb-fill" title="подставит финальный SQL сверху">📋 Вставить финальный SQL</button>
+      <label class="chip" style="cursor:pointer;user-select:none">
+        <input type="checkbox" id="sb-explain" style="vertical-align:middle;margin-right:4px">
+        🔬 авто-обернуть в EXPLAIN ANALYZE
+      </label>
     </div>
-    <div style="font-size:11px;color:var(--mut);margin-top:6px">
-      Сохраним пару (cost, real_ms) в логе — расхождение покажет, где у нас плохой прогноз
-      или у вашей БД нет нужного индекса.
+    <div id="sb-out" style="margin-top:12px"></div>
+
+    <div style="margin-top:18px;padding-top:14px;border-top:1px dashed #30363d">
+      <div class="label">📝 Отчёт о реальном времени</div>
+      <div style="font-size:12px;color:var(--mut);margin-bottom:8px">
+        Скопируй <b>Execution Time</b> из результата выше и впиши сюда — пара (cost, real_ms)
+        запишется в лог. Расхождение покажет: либо наш прогноз плохой, либо у БД нужен индекс.
+      </div>
+      <div class="pc-report">
+        <span class="label" style="margin:0">Реальное время:</span>
+        <input type="number" id="pc-real-ms" placeholder="мс" step="0.1" min="0">
+        <select id="pc-source" style="background:#0d1117;color:var(--fg);border:1px solid #30363d;border-radius:6px;padding:6px 8px;font:13px Menlo,monospace">
+          <option value="explain_analyze">из EXPLAIN ANALYZE</option>
+          <option value="manual">руками (psql \\timing)</option>
+        </select>
+        <button id="pc-report-btn">Отправить отчёт</button>
+        <span id="pc-report-result" style="font-size:12px"></span>
+      </div>
     </div>`;
+}
+async function runSandboxSQL() {
+  const sqlEl = $('#sb-sql');
+  const out = $('#sb-out');
+  const btn = $('#sb-run');
+  const autoExplain = $('#sb-explain')?.checked || false;
+  if (!sqlEl || !out) return;
+  const raw = (sqlEl.value || '').trim();
+  if (!raw) { out.innerHTML = '<div class="card warn">введите SQL</div>'; return; }
+  btn.disabled = true;
+  out.innerHTML = '<div class="card">… выполняю на тестовой БД (read-only, timeout 5s) …</div>';
+  // Если юзер сам обернул в EXPLAIN — отправляем как есть (explain=false на бэке),
+  // если попросил авто-обернуть — флаг explain=true (бэк делает EXPLAIN ANALYZE и парсит план).
+  const alreadyExplain = /^\\s*explain/i.test(raw);
+  const payload = alreadyExplain
+    ? { sql: raw, explain: false }
+    : (autoExplain
+        ? { sql: raw, explain: true }
+        : { sql: raw, explain: false });
+  try {
+    const r = await fetch('/run-sql', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    if (!r.ok) {
+      const e = await r.text();
+      out.innerHTML = `<div class="card err">HTTP ${r.status}: ${esc(e)}</div>`;
+      return;
+    }
+    const d = await r.json();
+    let planHtml = '';
+    // если плана нет, но юзер сам обернул в EXPLAIN (… FORMAT JSON) — попробуем
+    // распарсить JSON из первой ячейки и нарисовать дерево
+    let parsedPlan = d.plan;
+    if (!parsedPlan && d.rows?.length && d.columns?.length === 1) {
+      try {
+        const v = d.rows[0][0];
+        const j = typeof v === 'string' ? JSON.parse(v) : v;
+        if (Array.isArray(j) && j[0]?.Plan) parsedPlan = j[0];
+      } catch (e) { /* не JSON-план — игнор */ }
+    }
+    if (parsedPlan) planHtml = renderPlan(parsedPlan);
+    let resultHtml = '';
+    if (!parsedPlan && d.columns?.length) {
+      const headRow = '<tr>' + d.columns.map(c => `<th>${esc(c)}</th>`).join('') + '</tr>';
+      const bodyRows = d.rows.map(r =>
+        '<tr>' + r.map(c => `<td title="${esc(c)}">${esc(c)}</td>`).join('') + '</tr>'
+      ).join('');
+      const trunc = d.truncated ? ` <span class="warn">(показано ${d.row_count}, обрезано до 200)</span>` : '';
+      resultHtml = `
+        <div class="card">
+          <div class="label">Результат</div>
+          <div class="meta"><span>${d.row_count} строк${trunc}</span></div>
+          <div class="rs-wrap"><table class="rs">${headRow}${bodyRows}</table></div>
+        </div>`;
+    }
+    out.innerHTML = `
+      <div class="card">
+        <div class="meta">
+          <span class="ok">✓ выполнено</span>
+          <span>round-trip API: ${d.elapsed_ms.toFixed(0)}мс</span>
+          ${parsedPlan ? '<span class="ok">видишь Execution Time ниже? скопируй в отчёт.</span>' : ''}
+        </div>
+      </div>
+      ${planHtml}
+      ${resultHtml}`;
+  } catch (e) {
+    out.innerHTML = `<div class="card err">network: ${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
 }
 async function submitTimingReport() {
   const card = $('#pc-card');
@@ -941,7 +1011,7 @@ async function sendStream() {
       <small class="ok">↳ ${esc(v.recommendation || '')}</small>
     </div>`).join('') || '<div class="ok">⚑ уязвимостей не найдено</div>';
   const runBtn = finalEv.approved
-    ? '<button id="run-sql">Выполнить на demo_db →</button> ' + explainCheckbox()
+    ? ''
     : '<button class="ghost" disabled>SQL отклонён аудитором — выполнить нельзя</button>';
   const traceId = finalEv.trace_id;
   const traceLink = traceId
@@ -1038,7 +1108,7 @@ async function sendChat(answer /* optional — текстовый ответ ю�
         <small class="ok">↳ ${esc(v.recommendation || '')}</small>
       </div>`).join('') || '<div class="ok">⚑ уязвимостей не найдено</div>';
     const runBtn = d.approved
-      ? '<button id="run-sql">Выполнить на demo_db →</button> ' + explainCheckbox()
+      ? ''
       : '<button class="ghost" disabled>SQL отклонён аудитором — выполнить нельзя</button>';
     const traceId = d.trace_id;
     const traceLink = traceId
@@ -1745,9 +1815,12 @@ _RUN_SQL_MAX_ROWS = 200
 
 
 def _is_safe_select(sql: str) -> bool:
-    """@brief Грубая проверка: только SELECT / WITH. Никаких UPDATE/DELETE/DROP."""
+    """
+    @brief Допускаем только SELECT / WITH, в т.ч. внутри EXPLAIN (…) / EXPLAIN ANALYZE.
+    @details EXPLAIN ANALYZE исполняет вложенный запрос — отсекаем «EXPLAIN DELETE FROM …».
+    """
     s = sql.strip().rstrip(";").lstrip()
-    # снимем ведущий комментарий
+    # снимем ведущие комментарии
     while s.startswith("--") or s.startswith("/*"):
         if s.startswith("--"):
             nl = s.find("\n")
@@ -1755,6 +1828,27 @@ def _is_safe_select(sql: str) -> bool:
         else:
             cl = s.find("*/")
             s = s[cl + 2:].lstrip() if cl != -1 else ""
+    # снимем EXPLAIN-обёртку (и опциональные скобочные опции после EXPLAIN)
+    if s.lower().startswith("explain"):
+        s = s[len("explain"):].lstrip()
+        if s.startswith("("):
+            paren = 0
+            for i, c in enumerate(s):
+                if c == "(":
+                    paren += 1
+                elif c == ")":
+                    paren -= 1
+                    if paren == 0:
+                        s = s[i + 1:].lstrip()
+                        break
+        # после EXPLAIN могут идти слова ANALYZE/VERBOSE без скобок
+        while s.lower().startswith(("analyze", "verbose", "buffers", "costs", "timing", "summary", "format")):
+            # сожрём слово (и опц. JSON/TEXT после FORMAT)
+            sp = s.find(" ")
+            if sp == -1:
+                s = ""
+                break
+            s = s[sp + 1:].lstrip()
     head = s[:6].lower()
     return head.startswith("select") or head.startswith("with ")
 
@@ -1812,9 +1906,9 @@ def run_sql(req: RunSQLRequest, user: str = Depends(get_user)) -> RunSQLResponse
             pass
         raise HTTPException(status_code=400, detail=f"DB error: {e.pgerror or str(e)}")
 
-    # сериализация значений для JSON: dates, decimals → str
+    # сериализация значений для JSON: dates/decimals → str, JSON-планы (list/dict) — как есть
     def cell(v):
-        if v is None or isinstance(v, (int, float, str, bool)):
+        if v is None or isinstance(v, (int, float, str, bool, list, dict)):
             return v
         return str(v)
     out_rows = [[cell(c) for c in r] for r in rows]
