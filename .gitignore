@@ -44,6 +44,7 @@ Thumbs.db
 data/clarifications.jsonl
 data/feedback.jsonl
 data/events.csv
+data/timing.jsonl
 
 
 # Внутренние доки (черновики/Q&A для команды — не пушим в общий репо)

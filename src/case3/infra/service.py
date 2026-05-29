@@ -345,6 +345,29 @@ _UI_HTML = """<!doctype html>
   .vc-try { margin-top:12px; background:#21262d; border:1px solid #30363d; color:var(--fg);
             padding:8px 12px; border-radius:6px; cursor:pointer; font-size:13px; width:100% }
   .vc-try:hover { border-color:var(--accent); color:var(--accent) }
+  /* prediction card */
+  .pc-row { display:grid; grid-template-columns:120px 1fr; gap:12px; padding:4px 0;
+            font:13px ui-monospace,Menlo,monospace; align-items:baseline }
+  .pc-row .k { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.5px }
+  .pc-row .v b { color:var(--fg); font-size:14px }
+  .pc-hint { font-size:12px; color:var(--warn); padding:4px 8px; margin:4px 0;
+             background:#2a1f08; border-left:2px solid var(--warn); border-radius:3px }
+  .pc-tree { font:12px ui-monospace,Menlo,monospace; color:var(--mut); margin-top:6px }
+  .pc-tree div { padding:2px 0 }
+  .pc-tree .rel { color:#79c0ff }
+  .pc-help { margin-top:14px; padding-top:12px; border-top:1px dashed #30363d }
+  .pc-help .label { margin-bottom:8px }
+  .pc-snippet { background:#0d1117; border:1px solid #30363d; border-radius:6px;
+                padding:10px; margin:8px 0; font:12px ui-monospace,Menlo,monospace;
+                white-space:pre; overflow-x:auto }
+  .pc-snippet .cm { color:var(--mut) }
+  .pc-snippet .kw { color:#ff7b72 }
+  .pc-report { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px }
+  .pc-report input { background:#0d1117; color:var(--fg); border:1px solid #30363d;
+                     border-radius:6px; padding:6px 10px; font:13px Menlo,monospace; width:110px }
+  .pc-diff { font:12px ui-monospace,Menlo,monospace; padding:2px 8px; border-radius:10px }
+  .pc-diff.ok { background:#0d2818; color:var(--ok); border:1px solid var(--ok) }
+  .pc-diff.err { background:#28100d; color:var(--err); border:1px solid var(--err) }
 </style></head>
 <body><div class="wrap">
   <h1>SQL Security · Multi-Agent</h1>
@@ -623,6 +646,172 @@ function renderPlan(plan) {
     </div>`;
 }
 
+// ── Аналитический прогноз времени + «хочу помочь» обратная связь ────────────
+// Карточка появляется после approved SQL. async-fetch /predict-time → cost,
+// план, подсказки. Чекбокс «🤝 хочу помочь» открывает SQL-обёртки для замера
+// на боевой БД (EXPLAIN ANALYZE + pg_stat_statements). Юзер вводит реальное
+// время → POST /timing/report → пара (cost, real_ms) пишется в jsonl.
+function renderPredictionCard(sql, traceId) {
+  return `
+    <div class="card" id="pc-card" data-sql="${esc(sql)}" data-trace="${esc(traceId || '')}">
+      <div class="label">⏱ Аналитический прогноз времени</div>
+      <div id="pc-out" style="color:var(--mut);font-size:13px">… анализирую план …</div>
+      <div class="pc-help">
+        <label class="chip" style="cursor:pointer;user-select:none">
+          <input type="checkbox" id="pc-help-tog" style="vertical-align:middle;margin-right:6px">
+          🤝 Хочу помочь обучить — показать SQL-инструментацию для замера на моей БД
+        </label>
+        <div id="pc-help-block" style="display:none;margin-top:12px"></div>
+      </div>
+    </div>`;
+}
+function _firstTable(sql) {
+  const m = String(sql || '').match(/\\bfrom\\s+([a-zA-Z_][\\w.]*)/i);
+  return m ? m[1].replace(/^public\\./, '') : 'your_table';
+}
+async function bindPredictionCard(sql, traceId) {
+  const out = $('#pc-out');
+  if (!out) return;
+  try {
+    const r = await fetch('/predict-time', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({sql})
+    });
+    const d = await r.json();
+    if (d.error) {
+      out.innerHTML = `<span class="warn">⚠ ${esc(d.error)}</span>
+        <div style="margin-top:4px;font-size:12px;color:var(--mut)">${esc(d.note || '')}</div>`;
+      return;
+    }
+    const hintsHtml = (d.hints || []).map(h => `<div class="pc-hint">⚠ ${esc(h)}</div>`).join('');
+    const tree = (d.plan_tree || []).map(n =>
+      `<div>${'  '.repeat(n.depth)}└─ ${esc(n.node_type)}` +
+      (n.relation ? ` <span class="rel">${esc(n.relation)}</span>` : '') +
+      ` <span style="color:var(--mut)">· ${n.rows} строк · cost ${n.cost.toFixed(0)}</span></div>`
+    ).join('');
+    out.innerHTML = `
+      <div class="pc-row"><span class="k">Plan cost</span>
+        <span class="v"><b>${d.cost.toFixed(0)}</b> <small>(на demo_db)</small></span></div>
+      <div class="pc-row"><span class="k">Прогноз ms</span>
+        <span class="v"><b>~${d.predicted_ms_lo.toFixed(1)} – ${d.predicted_ms_hi.toFixed(1)} мс</b>
+          <small style="color:var(--mut)"> · диапазон широкий, нужны отчёты для калибровки</small></span></div>
+      <div class="pc-row"><span class="k">План</span>
+        <span class="v">${esc(d.plan_summary)} · ${d.rows_estimate} строк (оценка)</span></div>
+      ${hintsHtml ? `<div style="margin-top:8px">${hintsHtml}</div>` : ''}
+      <details style="margin-top:8px"><summary style="cursor:pointer;color:var(--mut);font-size:12px">показать дерево плана</summary>
+        <div class="pc-tree">${tree}</div></details>
+      <div style="margin-top:6px;font-size:11px;color:var(--mut)">${esc(d.note)}</div>`;
+    // запомним результат на карточке для submitTimingReport
+    const card = $('#pc-card');
+    if (card) {
+      card.dataset.cost = d.cost;
+      card.dataset.lo = d.predicted_ms_lo;
+      card.dataset.hi = d.predicted_ms_hi;
+    }
+  } catch (e) {
+    out.innerHTML = `<span class="err">не удалось получить прогноз: ${esc(e.message)}</span>`;
+  }
+  // тоггл «хочу помочь» — открывает SQL-обёртки + поле отчёта
+  const tog = $('#pc-help-tog');
+  const block = $('#pc-help-block');
+  if (tog && block) {
+    tog.onchange = () => {
+      if (tog.checked) {
+        block.innerHTML = renderHelpBlock(sql);
+        block.style.display = '';
+        const btn = $('#pc-report-btn');
+        if (btn) btn.onclick = submitTimingReport;
+      } else {
+        block.style.display = 'none';
+      }
+    };
+  }
+}
+function renderHelpBlock(sql) {
+  const tbl = _firstTable(sql);
+  const sqlEsc = esc(sql);
+  return `
+    <div class="label">Запустите на своей боевой БД <b>любой</b> из двух вариантов</div>
+    <div style="font-size:12px;color:var(--mut);margin-bottom:8px">
+      Оба варианта замеряют реальное время. Первый проще, второй точнее (агрегат по N прогонам).
+    </div>
+
+    <div style="font-size:13px;color:var(--fg);margin-top:10px"><b>A) EXPLAIN ANALYZE</b> — один прогон, точное время + per-op:</div>
+    <div class="pc-snippet"><span class="kw">EXPLAIN</span> (<span class="kw">ANALYZE</span>, <span class="kw">BUFFERS</span>, <span class="kw">FORMAT</span> <span class="kw">JSON</span>)
+${sqlEsc};</div>
+
+    <div style="font-size:13px;color:var(--fg);margin-top:10px"><b>B) pg_stat_statements</b> — агрегат по предыдущим прогонам (требует расширения):</div>
+    <div class="pc-snippet"><span class="cm">-- 1) сначала запустите ваш SQL хотя бы один раз:</span>
+${sqlEsc};
+
+<span class="cm">-- 2) затем — статистика:</span>
+<span class="kw">SELECT</span> calls,
+       round(mean_exec_time::numeric, 2)  <span class="kw">AS</span> mean_ms,
+       round(total_exec_time::numeric, 2) <span class="kw">AS</span> total_ms,
+       round(mean_plan_time::numeric, 2)  <span class="kw">AS</span> plan_ms
+  <span class="kw">FROM</span> pg_stat_statements
+ <span class="kw">WHERE</span> query <span class="kw">ILIKE</span> <span class="cm">'%${esc(tbl)}%'</span>
+ <span class="kw">ORDER BY</span> calls <span class="kw">DESC</span>
+ <span class="kw">LIMIT</span> 5;</div>
+
+    <div class="pc-report">
+      <span class="label" style="margin:0">Реальное время:</span>
+      <input type="number" id="pc-real-ms" placeholder="мс" step="0.1" min="0">
+      <select id="pc-source" style="background:#0d1117;color:var(--fg);border:1px solid #30363d;border-radius:6px;padding:6px 8px;font:13px Menlo,monospace">
+        <option value="explain_analyze">из EXPLAIN ANALYZE</option>
+        <option value="pg_stat_statements">из pg_stat_statements</option>
+        <option value="manual">руками (psql \\timing)</option>
+      </select>
+      <button id="pc-report-btn">Отправить отчёт</button>
+      <span id="pc-report-result" style="font-size:12px"></span>
+    </div>
+    <div style="font-size:11px;color:var(--mut);margin-top:6px">
+      Сохраним пару (cost, real_ms) в логе — расхождение покажет, где у нас плохой прогноз
+      или у вашей БД нет нужного индекса.
+    </div>`;
+}
+async function submitTimingReport() {
+  const card = $('#pc-card');
+  const realStr = $('#pc-real-ms')?.value;
+  const res = $('#pc-report-result');
+  if (!realStr || !card) return;
+  const realMs = parseFloat(realStr);
+  if (isNaN(realMs) || realMs < 0) {
+    res.innerHTML = '<span class="err">введите число</span>';
+    return;
+  }
+  const source = $('#pc-source')?.value || 'manual';
+  res.innerHTML = '<span style="color:var(--mut)">… отправляю …</span>';
+  try {
+    const r = await fetch('/timing/report', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        sql: card.dataset.sql,
+        real_ms: realMs,
+        predicted_cost: parseFloat(card.dataset.cost || '0') || null,
+        predicted_ms_lo: parseFloat(card.dataset.lo || '0') || null,
+        predicted_ms_hi: parseFloat(card.dataset.hi || '0') || null,
+        source,
+        trace_id: card.dataset.trace || null,
+      })
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) {
+      res.innerHTML = `<span class="err">не сохранено: ${esc(d.detail || d)}</span>`;
+      return;
+    }
+    if (d.diff_pct != null) {
+      const sign = d.diff_pct >= 0 ? '+' : '';
+      const cls = Math.abs(d.diff_pct) < 50 ? 'ok' : 'err';
+      res.innerHTML = `<span class="pc-diff ${cls}">${sign}${d.diff_pct.toFixed(0)}% от прогноза</span>`;
+    } else {
+      res.innerHTML = '<span class="ok">✓ сохранено</span>';
+    }
+  } catch (e) {
+    res.innerHTML = `<span class="err">network: ${esc(e.message)}</span>`;
+  }
+}
+
 // ── state диалога ──
 let _task = '';                 // оригинальная NL-задача
 let _history = [];              // массив ChatTurn'ов (assistant clarify + user content)
@@ -768,6 +957,7 @@ async function sendStream() {
       <div class="label">Уязвимости (последняя итерация)</div>
       ${vulnsHtml}
     </div>
+    ${finalEv.approved ? renderPredictionCard(finalEv.final_sql, traceId) : ''}
     <div class="card">
       <div class="label">Audit log</div>
       <pre>${esc(finalEv.audit_log)}</pre>
@@ -781,6 +971,7 @@ async function sendStream() {
   }
   const runBtnEl = $('#run-sql');
   if (runBtnEl) runBtnEl.onclick = runApprovedSQL;
+  if (finalEv.approved) bindPredictionCard(finalEv.final_sql, traceId);
   bindFeedback(finalEv);
   $('#reset').style.display = '';
 }
@@ -864,6 +1055,7 @@ async function sendChat(answer /* optional — текстовый ответ ю�
         <div class="label">Уязвимости (последняя итерация)</div>
         ${vulnsHtml}
       </div>
+      ${d.approved ? renderPredictionCard(d.final_sql, traceId) : ''}
       <div class="card">
         <div class="label">Audit log</div>
         <pre>${esc(d.audit_log)}</pre>
@@ -877,6 +1069,7 @@ async function sendChat(answer /* optional — текстовый ответ ю�
     }
     const runBtnEl = $('#run-sql');
     if (runBtnEl) runBtnEl.onclick = runApprovedSQL;
+    if (d.approved) bindPredictionCard(d.final_sql, traceId);
     bindFeedback(d);
     $('#reset').style.display = '';
   } catch (e) {
@@ -1635,6 +1828,194 @@ def run_sql(req: RunSQLRequest, user: str = Depends(get_user)) -> RunSQLResponse
         elapsed_ms=(time.perf_counter() - t0) * 1000,
         plan=plan,
     )
+
+
+# ─── /predict-time + /timing/report: аналитический прогноз и обратная связь ─
+# Идея: исполнять SQL на проде заказчика МЫ не имеем права (ТЗ). Поэтому:
+#   1) /predict-time — делаем безопасный EXPLAIN (БЕЗ ANALYZE) на demo_db.
+#      Получаем cost, структуру плана и подсказки. Это «аналитический прогноз».
+#   2) Юзеру выдаём SQL-обёртки (EXPLAIN ANALYZE, pg_stat_statements), которые
+#      он сам запускает на СВОЕЙ боевой БД и получает реальное время.
+#   3) /timing/report — юзер присылает реальное время; пишем пары
+#      (cost, real_ms) в data/timing.jsonl. По расхождению видно:
+#        · большое расхождение → плохой план/архитектура БД заказчика,
+#        · систематическая ошибка → нашему агенту нужна калибровка.
+class PredictTimeRequest(BaseModel):
+    sql: str = Field(..., min_length=5, max_length=10000)
+
+
+class PredictTimeResponse(BaseModel):
+    cost: float
+    rows_estimate: int
+    plan_summary: str
+    plan_tree: list[dict]
+    hints: list[str]
+    predicted_ms_lo: float
+    predicted_ms_hi: float
+    note: str
+    error: str | None = None
+
+
+def _walk_plan(node: dict, depth: int = 0) -> list[dict]:
+    """@brief Линеаризует план в плоский список для UI-рендера."""
+    out = [{
+        "depth": depth,
+        "node_type": node.get("Node Type", "?"),
+        "relation": node.get("Relation Name"),
+        "cost": float(node.get("Total Cost", 0.0)),
+        "rows": int(node.get("Plan Rows", 0)),
+    }]
+    for c in node.get("Plans", []) or []:
+        out.extend(_walk_plan(c, depth + 1))
+    return out
+
+
+def _collect_hints(root: dict) -> list[str]:
+    """@brief Архитектурные подсказки: что в плане потенциально болит на проде."""
+    hints: list[str] = []
+    def walk(n: dict, parent_rows: int = 0) -> None:
+        nt = n.get("Node Type", "")
+        rel = n.get("Relation Name")
+        rows = int(n.get("Plan Rows", 0))
+        if "Seq Scan" in nt and rel:
+            hints.append(
+                f"Seq Scan на «{rel}» — на проде с миллионами строк это медленно. "
+                f"Индекс по WHERE-колонкам уберёт scan."
+            )
+        if nt == "Nested Loop":
+            children = n.get("Plans", []) or []
+            if children and int(children[0].get("Plan Rows", 0)) > 1000:
+                hints.append(
+                    "Nested Loop с большим внешним набором — на проде станет квадратичным. "
+                    "Hash/Merge Join + индекс на ключе соединения."
+                )
+        if "Sort" in nt and rows > 10000:
+            hints.append(
+                "Sort на большом объёме — индекс с нужным порядком уберёт сортировку."
+            )
+        for c in n.get("Plans", []) or []:
+            walk(c, rows)
+    walk(root)
+    return hints[:5]
+
+
+@app.post("/predict-time", response_model=PredictTimeResponse)
+def predict_time(req: PredictTimeRequest, user: str = Depends(get_user)) -> PredictTimeResponse:
+    """
+    @brief EXPLAIN (FORMAT JSON, БЕЗ ANALYZE) на demo_db — безопасно, не исполняет.
+    @details Cost даёт оценку «по структуре плана», без знания реальных объёмов
+             заказчика. На проде масштабируется с размером данных — калибровка
+             через /timing/report.
+    """
+    if not _is_safe_select(req.sql):
+        return PredictTimeResponse(
+            cost=0.0, rows_estimate=0, plan_summary="", plan_tree=[], hints=[],
+            predicted_ms_lo=0.0, predicted_ms_hi=0.0,
+            note="не SELECT/WITH — анализ не делаем",
+            error="EXPLAIN доступен только для SELECT/WITH",
+        )
+    try:
+        import psycopg2
+    except ImportError:
+        return PredictTimeResponse(
+            cost=0.0, rows_estimate=0, plan_summary="", plan_tree=[], hints=[],
+            predicted_ms_lo=0.0, predicted_ms_hi=0.0,
+            note="psycopg2 не доступен в контейнере", error="no psycopg2")
+    cfg = dict(
+        host=os.environ.get("DB_HOST", "db"),
+        port=os.environ.get("DB_PORT", "5432"),
+        dbname=os.environ.get("DB_NAME", "demo_db"),
+        user=os.environ.get("DB_USER", "distr_user"),
+        password=os.environ.get("DB_PASSWORD", "pass"),
+        connect_timeout=5,
+    )
+    try:
+        conn = psycopg2.connect(**cfg)
+        conn.autocommit = False
+        cur = conn.cursor()
+        cur.execute("SET LOCAL statement_timeout = '5s'")
+        cur.execute("SET LOCAL default_transaction_read_only = on")
+        cur.execute("EXPLAIN (FORMAT JSON, COSTS) " + req.sql)
+        plan_raw = cur.fetchone()[0]
+        conn.rollback(); conn.close()
+    except Exception as e:
+        return PredictTimeResponse(
+            cost=0.0, rows_estimate=0, plan_summary="", plan_tree=[], hints=[],
+            predicted_ms_lo=0.0, predicted_ms_hi=0.0,
+            note="EXPLAIN не удался — синтаксис SQL или таблиц нет на demo_db",
+            error=str(e)[:200],
+        )
+    plan = plan_raw[0] if isinstance(plan_raw, list) and plan_raw else plan_raw
+    root = plan.get("Plan", {})
+    cost = float(root.get("Total Cost", 0.0))
+    rows = int(root.get("Plan Rows", 0))
+    summary = root.get("Node Type", "?")
+    if rel := root.get("Relation Name"):
+        summary += f" on {rel}"
+    hints = _collect_hints(root)
+    # широкий диапазон без калибровки (cold cache 0.5 мс/cost, hot 0.01)
+    return PredictTimeResponse(
+        cost=cost, rows_estimate=rows,
+        plan_summary=summary,
+        plan_tree=_walk_plan(root),
+        hints=hints,
+        predicted_ms_lo=cost * 0.01,
+        predicted_ms_hi=cost * 0.5,
+        note="оценка на demo_db (60 таблиц faker); на prod масштабируется с объёмом — нужны отчёты юзеров для калибровки",
+    )
+
+
+_TIMING_LOG = "data/timing.jsonl"
+
+
+class TimingReportRequest(BaseModel):
+    sql: str = Field(..., max_length=10000)
+    real_ms: float = Field(..., ge=0, le=600_000)
+    predicted_cost: float | None = None
+    predicted_ms_lo: float | None = None
+    predicted_ms_hi: float | None = None
+    source: str = "manual"     # manual / explain_analyze / pg_stat_statements
+    comment: str = ""
+    trace_id: str | None = None
+
+
+class TimingReportResponse(BaseModel):
+    ok: bool
+    diff_pct: float | None = None   # (real − mid_prediction) / mid_prediction × 100
+
+
+@app.post("/timing/report", response_model=TimingReportResponse)
+def timing_report(req: TimingReportRequest, user: str = Depends(get_user)) -> TimingReportResponse:
+    """@brief Юзер прислал реальное время с его боевой БД — пишем в jsonl."""
+    from datetime import datetime as _dt
+    import threading as _th
+    diff_pct: float | None = None
+    if req.predicted_ms_lo is not None and req.predicted_ms_hi is not None:
+        mid = (req.predicted_ms_lo + req.predicted_ms_hi) / 2.0
+        if mid > 0:
+            diff_pct = (req.real_ms - mid) / mid * 100.0
+    rec = {
+        "ts": _dt.utcnow().isoformat(timespec="seconds") + "Z",
+        "user": user,
+        "sql": req.sql,
+        "real_ms": req.real_ms,
+        "predicted_cost": req.predicted_cost,
+        "predicted_ms_lo": req.predicted_ms_lo,
+        "predicted_ms_hi": req.predicted_ms_hi,
+        "diff_pct": diff_pct,
+        "source": req.source,
+        "comment": req.comment,
+        "trace_id": req.trace_id,
+    }
+    os.makedirs(os.path.dirname(_TIMING_LOG), exist_ok=True)
+    # простая блокировка — одиночные дозаписи редкие
+    with _th.Lock():
+        with open(_TIMING_LOG, "a", encoding="utf-8") as f:
+            f.write(_json.dumps(rec, ensure_ascii=False) + "\n")
+    ev.log_event(user=user, endpoint="/timing/report", task="",
+                 sql=req.sql, approved=True, iterations=None)
+    return TimingReportResponse(ok=True, diff_pct=diff_pct)
+
 
 # ─── /admin/* — HTTP Basic, статистика и выгрузка CSV ───────────────────────
 @app.get("/admin/stats")
