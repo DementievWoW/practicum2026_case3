@@ -812,8 +812,10 @@ async function bindPredictionCard(sql, traceId) {
     if (!pasteEl || !parsedEl) return;
     const raw = pasteEl.value || '';
     if (!raw.trim()) { parsedEl.innerHTML = '— нет вывода —'; return; }
-    const mExec = raw.match(/"Execution Time"\\s*:\\s*([\\d.]+)/);
-    const mPlan = raw.match(/"Planning Time"\\s*:\\s*([\\d.]+)/);
+    // ловим разные форматы: JSON ("Execution Time": 3.56),
+    // psql text (Execution Time: 3.56 ms), наш рендер (Execution: 3.56 мс)
+    const mExec = raw.match(/"?Execution(?:\\s+Time)?"?\\s*:\\s*([\\d.]+)/i);
+    const mPlan = raw.match(/"?Planning(?:\\s+Time)?"?\\s*:\\s*([\\d.]+)/i);
     if (mExec) {
       const ms = parseFloat(mExec[1]);
       if (realEl) realEl.value = ms;
@@ -944,6 +946,24 @@ async function runSandboxSQL() {
       } catch (e) { /* не JSON-план — игнор */ }
     }
     if (parsedPlan) planHtml = renderPlan(parsedPlan);
+    // авто-проброс Execution Time в поле отчёта (если карточка прогноза открыта)
+    let autoFilled = false;
+    if (parsedPlan && typeof parsedPlan['Execution Time'] === 'number') {
+      const realEl = $('#pc-real-ms');
+      const srcEl = $('#pc-source');
+      const tog = $('#pc-help-tog');
+      const reportBlock = $('#pc-report-block');
+      if (realEl) {
+        realEl.value = parsedPlan['Execution Time'].toFixed(3);
+        if (srcEl) srcEl.value = 'explain_analyze';
+        if (tog && !tog.checked) {                  // если «хочу помочь» выкл — включим
+          tog.checked = true;
+          if (reportBlock) reportBlock.style.display = '';
+          if (tog.onchange) tog.onchange();
+        }
+        autoFilled = true;
+      }
+    }
     let resultHtml = '';
     if (!parsedPlan && d.columns?.length) {
       const headRow = '<tr>' + d.columns.map(c => `<th>${esc(c)}</th>`).join('') + '</tr>';
@@ -963,7 +983,7 @@ async function runSandboxSQL() {
         <div class="meta">
           <span class="ok">✓ выполнено</span>
           <span>round-trip API: ${d.elapsed_ms.toFixed(0)}мс</span>
-          ${parsedPlan ? '<span class="ok">видишь Execution Time ниже? скопируй в отчёт.</span>' : ''}
+          ${autoFilled ? '<span class="ok">⤴ Execution Time подставлен в поле отчёта</span>' : (parsedPlan ? '<span class="ok">видишь Execution Time ниже? скопируй в отчёт.</span>' : '')}
         </div>
       </div>
       ${planHtml}
