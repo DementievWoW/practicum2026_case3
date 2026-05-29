@@ -24,10 +24,39 @@ from case3.contracts import AuditResult, Lesson, SQLGenerator
 from case3.llm.client import LLMClient
 
 
+_SQL_KEYWORDS = (
+    "SELECT", "WITH", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER",
+    "DROP", "TRUNCATE", "EXPLAIN", "GRANT", "REVOKE", "MERGE",
+)
+
+
 def _strip_sql_fence(text: str) -> str:
-    """@brief Достаёт SQL из ```sql ... ``` (реальные LLM часто оборачивают в фенс)."""
-    m = re.search(r"```(?:sql)?\s*(.+?)```", text, re.S | re.I)
-    return (m.group(1) if m else text).strip()
+    """
+    @brief Достаёт SQL из произвольного ответа LLM:
+           1) если есть ```sql ... ``` — берём содержимое первого фенса;
+           2) обрезаем всё ДО первого SQL-стейтмента (SELECT/WITH/INSERT/…);
+           3) если есть `;` — обрезаем всё ПОСЛЕ последнего (хвостовые пояснения).
+    @details Реальные LLM часто оборачивают SQL в markdown, добавляют «Понял, …»
+             в начале и развёрнутое объяснение в конце. Парсер аудитора без
+             очистки видит мусор и валит на PARSE_ERROR.
+    """
+    if not text:
+        return ""
+    # 1) первый ```sql ... ``` fence (если есть)
+    m = re.search(r"```(?:sql|postgres(?:ql)?)?\s*(.+?)```", text, re.S | re.I)
+    if m:
+        text = m.group(1)
+    text = text.strip()
+    # 2) обрезаем всё до первого SQL-keyword
+    kw_re = re.compile(r"\b(" + "|".join(_SQL_KEYWORDS) + r")\b", re.I)
+    m2 = kw_re.search(text)
+    if m2:
+        text = text[m2.start():]
+    # 3) обрезаем хвост после последнего `;` (если он есть)
+    last = text.rfind(";")
+    if last > 0:
+        text = text[:last + 1]
+    return text.strip()
 
 
 def _extract_clarify_json(text: str) -> dict | None:
