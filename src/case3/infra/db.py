@@ -68,9 +68,18 @@ class StubDatabase:
         @return ExplainPlan с total_cost/rows/флагами.
         """
         s = " " + sql.lower() + " "
-        froms = re.findall(r"\bfrom\s+([a-z_][a-z0-9_]*)", s)
+        # comma-separated FROM table_a, table_b, ... — все считаются за отдельные таблицы
+        froms_raw = re.findall(
+            r"\bfrom\s+([a-z_][a-z0-9_]*(?:\s*,\s*[a-z_][a-z0-9_]*)*)", s
+        )
+        from_tables: set[str] = set()
+        for group in froms_raw:
+            for tname in group.split(","):
+                t = tname.strip()
+                if t:
+                    from_tables.add(t)
         joins = re.findall(r"\bjoin\s+([a-z_][a-z0-9_]*)", s)
-        n_tables = len(set(froms)) + len(joins)
+        n_tables = len(from_tables) + len(joins)
         has_where = " where " in s
         has_join_cond = " on " in s or (has_where and "=" in s)
 
