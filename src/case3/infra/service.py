@@ -729,10 +729,10 @@ async function bindPredictionCard(sql, traceId) {
     });
     const d = await r.json();
     if (d.error) {
-      out.innerHTML = `<span class="warn">⚠ ${esc(d.error)}</span>
+      // прогноз не получился — показываем причину, но команду ниже всё равно заполняем
+      out.innerHTML = `<span class="warn">⚠ прогноз не построен: ${esc(d.error)}</span>
         <div style="margin-top:4px;font-size:12px;color:var(--mut)">${esc(d.note || '')}</div>`;
-      return;
-    }
+    } else {
     const hintsHtml = (d.hints || []).map(h => `<div class="pc-hint">⚠ ${esc(h)}</div>`).join('');
     const tree = (d.plan_tree || []).map(n =>
       `<div>${'  '.repeat(n.depth)}└─ ${esc(n.node_type)}` +
@@ -758,6 +758,7 @@ async function bindPredictionCard(sql, traceId) {
       card.dataset.lo = d.predicted_ms_lo;
       card.dataset.hi = d.predicted_ms_hi;
     }
+    }  // end of else (no d.error)
   } catch (e) {
     out.innerHTML = `<span class="err">не удалось получить прогноз: ${esc(e.message)}</span>`;
   }
