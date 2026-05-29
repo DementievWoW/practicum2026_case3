@@ -682,10 +682,12 @@ function renderPredictionCard(sql, traceId) {
       <div id="pc-report-block" style="display:none;margin-top:14px;padding-top:12px;border-top:1px dashed #30363d">
         <div class="label">📝 Отчёт о реальном времени</div>
         <div style="font-size:12px;color:var(--mut);margin-bottom:8px">
-          Запусти команду выше у себя → Postgres вернёт <b>Execution Time</b> →
-          впиши его сюда. Сохраним пару (cost, real_ms) в логе; расхождение —
-          сигнал либо о нашем прогнозе, либо о пропущенном индексе у вас.
+          Вставь сюда <b>весь вывод EXPLAIN ANALYZE</b> (или просто фрагмент с
+          <code>"Execution Time"</code>) — мы сами выдернем число. Или впиши вручную ниже.
         </div>
+        <textarea id="pc-explain-paste" rows="4" placeholder='Вставь сюда вывод psql целиком. Пример: [{"Plan": {...}, "Execution Time": 12.345}]'
+                  style="width:100%;background:#0d1117;color:var(--fg);border:1px solid #30363d;border-radius:6px;padding:8px;font:12px ui-monospace,Menlo,monospace;resize:vertical"></textarea>
+        <div style="font-size:11px;color:var(--mut);margin:4px 0 10px" id="pc-explain-parsed">— нет вывода —</div>
         <div class="pc-report">
           <span class="label" style="margin:0">Реальное время:</span>
           <input type="number" id="pc-real-ms" placeholder="мс" step="0.1" min="0">
@@ -697,6 +699,10 @@ function renderPredictionCard(sql, traceId) {
           <button id="pc-report-btn">Отправить отчёт</button>
           <span id="pc-report-result" style="font-size:12px"></span>
         </div>
+      </div>
+
+      <div id="pc-trace-bottom" style="display:none;margin-top:14px;padding-top:10px;border-top:1px solid #21262d;font-size:12px;color:var(--mut)">
+        ↳ <a id="pc-trace-link" href="#" target="_blank" style="color:var(--accent);text-decoration:none">Открыть трейс пайплайна в Langfuse →</a>
       </div>
     </div>`;
 }
@@ -786,6 +792,41 @@ async function bindPredictionCard(sql, traceId) {
   }
   const reportBtn = $('#pc-report-btn');
   if (reportBtn) reportBtn.onclick = submitTimingReport;
+
+  // авто-парсинг вставленного EXPLAIN-вывода: ищем "Execution Time": NUMBER
+  const pasteEl = $('#pc-explain-paste');
+  const parsedEl = $('#pc-explain-parsed');
+  const realEl = $('#pc-real-ms');
+  const srcEl = $('#pc-source');
+  function _parsePaste() {
+    if (!pasteEl || !parsedEl) return;
+    const raw = pasteEl.value || '';
+    if (!raw.trim()) { parsedEl.innerHTML = '— нет вывода —'; return; }
+    const mExec = raw.match(/"Execution Time"\\s*:\\s*([\\d.]+)/);
+    const mPlan = raw.match(/"Planning Time"\\s*:\\s*([\\d.]+)/);
+    if (mExec) {
+      const ms = parseFloat(mExec[1]);
+      if (realEl) realEl.value = ms;
+      if (srcEl) srcEl.value = 'explain_analyze';
+      const planStr = mPlan ? ` · Planning: ${parseFloat(mPlan[1]).toFixed(2)} мс` : '';
+      parsedEl.innerHTML = `<span class="ok">✓ распарсил Execution Time = <b>${ms.toFixed(3)} мс</b>${planStr}</span>`;
+    } else {
+      parsedEl.innerHTML = '<span class="warn">не нашёл "Execution Time" — впиши вручную ниже</span>';
+    }
+  }
+  if (pasteEl) {
+    pasteEl.addEventListener('input', _parsePaste);
+    pasteEl.addEventListener('paste', () => setTimeout(_parsePaste, 0));
+  }
+
+  // линк на трейс внизу карточки
+  const traceBottom = $('#pc-trace-bottom');
+  const traceLink = $('#pc-trace-link');
+  if (traceId && traceBottom && traceLink) {
+    traceLink.href = 'http://localhost:13001/trace/' + traceId;
+    traceLink.textContent = 'Открыть трейс ' + traceId.slice(0, 8) + ' в Langfuse →';
+    traceBottom.style.display = '';
+  }
 }
 function renderHelpBlock(sql) {
   // Песочница: пустой textarea → юзер пастит свой SQL (можно с EXPLAIN ANALYZE),
@@ -943,6 +984,7 @@ let _task = '';                 // оригинальная NL-задача
 let _history = [];              // массив ChatTurn'ов (assistant clarify + user content)
 let _lastSQL = null;
 let _lastApproved = false;
+let _warningsShown = false;     // NL-warnings показываем ровно один раз на диалог
 const msgs = $('#msgs');
 
 function renderUser(text) {
@@ -960,13 +1002,15 @@ function renderBot(html, cls='bot') {
 }
 function renderWarnings(warnings) {
   if (!warnings || !warnings.length) return;
+  if (_warningsShown) return;        // уже видели в этом диалоге — не дублим
+  _warningsShown = true;
   const html = warnings.map(w =>
     `<b>${esc(w.code)}</b> · ${esc(w.severity)}<br>${esc(w.message)}<br><small>${esc(w.hint)}</small>`
   ).join('<hr style="border:0;border-top:1px solid #6e4500;margin:8px 0">');
   renderBot('⚠ NL-валидатор предупреждает:<br>' + html, 'warn');
 }
 function resetDialog() {
-  _task = ''; _history = []; _lastSQL = null; _lastApproved = false;
+  _task = ''; _history = []; _lastSQL = null; _lastApproved = false; _warningsShown = false;
   msgs.innerHTML = '';
   out.innerHTML = '';
   $('#task').value = '';
