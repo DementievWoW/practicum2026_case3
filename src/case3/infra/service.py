@@ -1138,8 +1138,11 @@ async function sendStream() {
     ? '<span class="ok">✓ approved</span>'
     : '<span class="err">✗ rejected</span>';
   const traj = (finalEv.risk_trajectory || []).map(x => x.toFixed(1)).join(' → ');
+  const _pipeMs = (finalEv.pipeline_ms || 0).toFixed(0);
+  const _iterMs = (finalEv.iteration_ms || []).map(x => x.toFixed(0)).join(' + ');
+  const _iterMsHtml = _iterMs ? ` <small style="color:var(--mut)">(${_iterMs} мс по итерациям)</small>` : '';
   renderBot(`SQL готов · ${verdict} · итераций <b>${finalEv.iterations_used}</b>
-             · риск <b>${traj}</b>`);
+             · риск <b>${traj}</b> · <b>${_pipeMs} мс</b>${_iterMsHtml}`);
   const vulnsHtml = (finalEv.vulnerabilities || []).map(v => `
     <div class="vuln ${v.risk_score < 4 ? 'low':''}">
       <b>${esc(v.vuln_class)}</b> · risk ${v.risk_score.toFixed(1)}<br>
@@ -1238,8 +1241,11 @@ async function sendChat(answer /* optional — текстовый ответ ю�
       ? '<span class="ok">✓ approved</span>'
       : '<span class="err">✗ rejected</span>';
     const traj = (d.risk_trajectory || []).map(x => x.toFixed(1)).join(' → ');
+    const _pMs = ((d.metadata && d.metadata.pipeline_ms) || 0).toFixed(0);
+    const _iMs = ((d.metadata && d.metadata.iteration_ms) || []).map(x => x.toFixed(0)).join(' + ');
+    const _iMsHtml = _iMs ? ` <small style="color:var(--mut)">(${_iMs} мс по итерациям)</small>` : '';
     renderBot(`SQL готов · ${verdict} · итераций <b>${d.iterations_used}</b>
-               · риск <b>${traj}</b>`);
+               · риск <b>${traj}</b> · <b>${_pMs} мс</b>${_iMsHtml}`);
 
     const vulnsHtml = (d.vulnerabilities || []).map(v => `
       <div class="vuln ${v.risk_score < 4 ? 'low':''}">
@@ -1818,6 +1824,8 @@ async def chat_stream(req: ChatRequest, user: str = Depends(get_user)):
                 "approved": res.approved,
                 "iterations_used": res.iterations_used,
                 "risk_trajectory": res.metadata.get("risk_trajectory", []),
+                "pipeline_ms": res.metadata.get("pipeline_ms"),
+                "iteration_ms": res.metadata.get("iteration_ms", []),
                 "final_sql": res.final_sql,
                 "audit_log": res.audit_log,
                 "trace_id": res.metadata.get("trace_id"),

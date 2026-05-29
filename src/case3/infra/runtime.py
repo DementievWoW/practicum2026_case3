@@ -45,6 +45,21 @@ def run_instrumented(
         res = run_pipeline(task_description, llm=llm, on_event=on_event, **kw)
         dt = time.perf_counter() - t0
 
+        # ── длительность пайплайна → в metadata для UI/трейса ──
+        res.metadata["pipeline_ms"] = round(dt * 1000.0, 2)
+        # длительность каждой итерации по timestamps (start = first ts - dt стартового зазора слишком неточно;
+        # считаем как разность между соседними логами)
+        if res.iterations_log:
+            ts_list = [il.timestamp for il in res.iterations_log]
+            iter_ms: list[float] = []
+            for i in range(len(ts_list)):
+                if i == 0:
+                    # первая итерация: примерная длительность = общее время − суммарное между итерациями
+                    continue
+                iter_ms.append(round((ts_list[i] - ts_list[i - 1]).total_seconds() * 1000.0, 2))
+            # последняя итерация = pipeline_ms − сумма промежуточных (≈ длительность 1-й + последней)
+            res.metadata["iteration_ms"] = iter_ms
+
         # ── метрики Prometheus ──
         m.RUNS.inc(approved=str(res.approved).lower())
         m.ITERATIONS.observe(res.iterations_used)
