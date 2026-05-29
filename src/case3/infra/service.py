@@ -216,6 +216,23 @@ _UI_HTML = """<!doctype html>
   .think .step .t   { color:var(--mut); font-size:11px; margin-left:6px }
   .think pre { background:#0d1117; padding:6px 10px; border-radius:4px;
                margin:4px 0; max-height:100px; overflow:auto; font-size:11px }
+  /* explain analyze tree */
+  .plan-head { display:flex; gap:18px; flex-wrap:wrap; font:13px ui-monospace,Menlo,monospace;
+               padding:8px 10px; background:#0d1117; border-radius:6px; margin-bottom:8px }
+  .plan-head b { color:var(--fg); font-size:14px }
+  .plan-tree { font:12px ui-monospace,SFMono-Regular,Menlo,monospace }
+  .plan-node { display:grid; grid-template-columns:110px 1fr; gap:10px;
+               padding:4px 8px; border-bottom:1px solid #21262d; align-items:baseline }
+  .plan-node:last-child { border-bottom:0 }
+  .plan-time { font-weight:700; text-align:right }
+  .plan-time.ok   { color:var(--ok) }
+  .plan-time.warn { color:var(--warn) }
+  .plan-time.err  { color:var(--err) }
+  .plan-pct { color:var(--mut); font-weight:400; font-size:11px; margin-left:4px }
+  .plan-row { color:var(--fg) }
+  .plan-rel { color:#79c0ff }
+  .plan-info { color:var(--mut); font-size:11px; margin-top:2px }
+  .explain-tog { vertical-align:middle; margin:0 4px 0 0 }
 </style></head>
 <body><div class="wrap">
   <h1>SQL Security · Multi-Agent</h1>
@@ -414,8 +431,58 @@ $$('.chip').forEach(c => {
   c.onclick = () => { $('#task').value = c.dataset.q; $('#go').click(); };
 });
 
+// ── persist explain-toggle state ──
+document.addEventListener('change', e => {
+  if (e.target.classList && e.target.classList.contains('explain-tog')) {
+    localStorage.setItem('explain', e.target.checked ? '1' : '');
+  }
+});
+
 function esc(s) { return String(s ?? '').replace(/[&<>]/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+// ── EXPLAIN ANALYZE: чекбокс + рендер дерева плана ─────────────────────
+function explainCheckbox() {
+  const on = localStorage.getItem('explain') === '1' ? 'checked' : '';
+  return `<label class="chip" style="cursor:pointer;user-select:none" title="EXPLAIN (ANALYZE) — Postgres вернёт реальное время на каждом узле плана"><input type="checkbox" class="explain-tog" ${on}> 🔬 разбивка по операциям</label>`;
+}
+function renderPlan(plan) {
+  if (!plan || !plan['Plan']) return '';
+  const exec = +plan['Execution Time'] || 0;
+  const planTime = +plan['Planning Time'] || 0;
+  function node(n, depth) {
+    const t = +n['Actual Total Time'] || 0;
+    const rows = n['Actual Rows'];
+    const erows = n['Plan Rows'];
+    const cost = +n['Total Cost'] || 0;
+    const type = n['Node Type'] || '?';
+    const rel = n['Relation Name'] ? ` <span class="plan-rel">${esc(n['Relation Name'])}</span>` : '';
+    const heat = exec ? (t/exec > 0.5 ? 'err' : (t/exec > 0.2 ? 'warn' : 'ok')) : 'ok';
+    const pct = exec ? ` <span class="plan-pct">${(t/exec*100).toFixed(0)}%</span>` : '';
+    const indent = '│ '.repeat(Math.max(0, depth-1)) + (depth ? '└─ ' : '');
+    const extra = (rows != null && erows != null && erows > 0 && (rows/erows > 10 || rows/erows < 0.1))
+        ? ` <span class="err">[оценка ×${(rows/erows).toFixed(1)}]</span>` : '';
+    let html = `<div class="plan-node">
+      <div class="plan-time ${heat}">${t.toFixed(2)} мс${pct}</div>
+      <div>
+        <div class="plan-row">${esc(indent)}${esc(type)}${rel}</div>
+        <div class="plan-info">${rows ?? '?'} строк (план: ${erows ?? '?'})${extra} · cost ${cost.toFixed(0)}</div>
+      </div>
+    </div>`;
+    (n['Plans'] || []).forEach(c => html += node(c, depth+1));
+    return html;
+  }
+  return `
+    <div class="card">
+      <div class="label">⏱ Тайминг (EXPLAIN ANALYZE)</div>
+      <div class="plan-head">
+        <span><b>Execution: ${exec.toFixed(2)} мс</b></span>
+        <span>Planning: ${planTime.toFixed(2)} мс</span>
+        <span class="ok">красная узлы = «горячее место» (>50% времени)</span>
+      </div>
+      <div class="plan-tree">${node(plan['Plan'], 0)}</div>
+    </div>`;
+}
 
 // ── state диалога ──
 let _task = '';                 // оригинальная NL-задача
@@ -546,7 +613,7 @@ async function sendStream() {
       <small class="ok">↳ ${esc(v.recommendation || '')}</small>
     </div>`).join('') || '<div class="ok">⚑ уязвимостей не найдено</div>';
   const runBtn = finalEv.approved
-    ? '<button id="run-sql">Выполнить на demo_db →</button>'
+    ? '<button id="run-sql">Выполнить на demo_db →</button> ' + explainCheckbox()
     : '<button class="ghost" disabled>SQL отклонён аудитором — выполнить нельзя</button>';
   const traceId = finalEv.trace_id;
   const traceLink = traceId
@@ -641,7 +708,7 @@ async function sendChat(answer /* optional — текстовый ответ ю�
         <small class="ok">↳ ${esc(v.recommendation || '')}</small>
       </div>`).join('') || '<div class="ok">⚑ уязвимостей не найдено</div>';
     const runBtn = d.approved
-      ? '<button id="run-sql">Выполнить на demo_db →</button>'
+      ? '<button id="run-sql">Выполнить на demo_db →</button> ' + explainCheckbox()
       : '<button class="ghost" disabled>SQL отклонён аудитором — выполнить нельзя</button>';
     const traceId = d.trace_id;
     const traceLink = traceId
@@ -872,12 +939,15 @@ async function runApprovedSQL() {
   if (!_lastSQL || !_lastApproved) return;
   const runOut = $('#run-out');
   const btn = $('#run-sql');
+  const tog = document.querySelector('.explain-tog');
+  const explain = !!tog?.checked;
+  localStorage.setItem('explain', explain ? '1' : '');
   btn.disabled = true;
-  runOut.innerHTML = '<div class="card">… выполняю на demo_db (read-only, timeout 5s) …</div>';
+  runOut.innerHTML = `<div class="card">… ${explain ? 'EXPLAIN ANALYZE на demo_db' : 'выполняю на demo_db'} (read-only, timeout 5s) …</div>`;
   try {
     const r = await fetch('/run-sql', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({sql: _lastSQL})
+      body: JSON.stringify({sql: _lastSQL, explain})
     });
     if (!r.ok) {
       const err = await r.text();
@@ -885,23 +955,33 @@ async function runApprovedSQL() {
       return;
     }
     const d = await r.json();
-    const headRow = '<tr>' + d.columns.map(c => `<th>${esc(c)}</th>`).join('') + '</tr>';
-    const bodyRows = d.rows.map(r =>
-      '<tr>' + r.map(c => `<td title="${esc(c)}">${esc(c)}</td>`).join('') + '</tr>'
-    ).join('');
-    const trunc = d.truncated ? ` <span class="warn">(показано ${d.row_count}, обрезано до 200)</span>` : '';
+    const planHtml = renderPlan(d.plan);
+    // если был EXPLAIN — таблица результатов пустая, не рендерим её
+    let resultHtml = '';
+    if (!d.plan) {
+      const headRow = '<tr>' + d.columns.map(c => `<th>${esc(c)}</th>`).join('') + '</tr>';
+      const bodyRows = d.rows.map(r =>
+        '<tr>' + r.map(c => `<td title="${esc(c)}">${esc(c)}</td>`).join('') + '</tr>'
+      ).join('');
+      const trunc = d.truncated ? ` <span class="warn">(показано ${d.row_count}, обрезано до 200)</span>` : '';
+      resultHtml = `
+        <div class="card">
+          <div class="label">Результат</div>
+          <div class="meta">
+            <span>${d.row_count} строк${trunc}</span>
+          </div>
+          <div class="rs-wrap"><table class="rs">${headRow}${bodyRows}</table></div>
+        </div>`;
+    }
     runOut.innerHTML = `
       <div class="card">
         <div class="meta">
-          <span class="ok">✓ выполнено</span>
-          <span>${d.row_count} строк${trunc}</span>
-          <span>${d.elapsed_ms.toFixed(0)}мс</span>
+          <span class="ok">✓ ${d.plan ? 'EXPLAIN ANALYZE выполнен' : 'выполнено'}</span>
+          <span>round-trip API: ${d.elapsed_ms.toFixed(0)}мс</span>
         </div>
       </div>
-      <div class="card">
-        <div class="label">Результат</div>
-        <div class="rs-wrap"><table class="rs">${headRow}${bodyRows}</table></div>
-      </div>`;
+      ${planHtml}
+      ${resultHtml}`;
   } catch (e) {
     runOut.innerHTML = `<div class="card err">network error: ${esc(e.message)}</div>`;
   } finally {
@@ -1314,6 +1394,7 @@ def feedback(req: FeedbackRequest, user: str = Depends(get_user)) -> FeedbackRes
 # statement_timeout 5 сек, LIMIT 200 принудительно.
 class RunSQLRequest(BaseModel):
     sql: str = Field(..., min_length=5, max_length=5000)
+    explain: bool = False     # EXPLAIN (ANALYZE) — per-op тайминг вместо результата
 
 
 class RunSQLResponse(BaseModel):
@@ -1322,6 +1403,7 @@ class RunSQLResponse(BaseModel):
     row_count: int
     truncated: bool
     elapsed_ms: float
+    plan: dict | None = None  # EXPLAIN (FORMAT JSON) если запрошен
 
 
 _RUN_SQL_MAX_ROWS = 200
@@ -1370,12 +1452,21 @@ def run_sql(req: RunSQLRequest, user: str = Depends(get_user)) -> RunSQLResponse
         cur = conn.cursor()
         cur.execute("SET LOCAL statement_timeout = '5s'")
         cur.execute("SET LOCAL default_transaction_read_only = on")
-        cur.execute(req.sql)
-        cols = [d.name for d in cur.description] if cur.description else []
-        # ограничим вывод
-        rows = cur.fetchmany(_RUN_SQL_MAX_ROWS + 1)
-        truncated = len(rows) > _RUN_SQL_MAX_ROWS
-        rows = rows[:_RUN_SQL_MAX_ROWS]
+        if req.explain:
+            # EXPLAIN ANALYZE исполняет запрос → даёт реальное время и per-op разбивку.
+            # Для SELECT в read-only транзакции это безопасно (rollback всё равно).
+            cur.execute("EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT JSON, COSTS, TIMING) " + req.sql)
+            plan_raw = cur.fetchone()[0]          # list[{Plan, Execution Time, ...}]
+            plan = plan_raw[0] if isinstance(plan_raw, list) and plan_raw else plan_raw
+            cols, rows, truncated = [], [], False
+        else:
+            cur.execute(req.sql)
+            cols = [d.name for d in cur.description] if cur.description else []
+            # ограничим вывод
+            rows = cur.fetchmany(_RUN_SQL_MAX_ROWS + 1)
+            truncated = len(rows) > _RUN_SQL_MAX_ROWS
+            rows = rows[:_RUN_SQL_MAX_ROWS]
+            plan = None
         conn.rollback()
         conn.close()
     except psycopg2.Error as e:
@@ -1400,6 +1491,7 @@ def run_sql(req: RunSQLRequest, user: str = Depends(get_user)) -> RunSQLResponse
         row_count=len(out_rows),
         truncated=truncated,
         elapsed_ms=(time.perf_counter() - t0) * 1000,
+        plan=plan,
     )
 
 # ─── /admin/* — HTTP Basic, статистика и выгрузка CSV ───────────────────────
