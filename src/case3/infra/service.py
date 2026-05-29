@@ -882,7 +882,16 @@ async function runSandboxSQL() {
     });
     if (!r.ok) {
       const e = await r.text();
-      out.innerHTML = `<div class="card err">HTTP ${r.status}: ${esc(e)}</div>`;
+      let detail = e;
+      try { const j = JSON.parse(e); detail = j.detail || e; } catch (_) {}
+      const cls = r.status === 400 ? 'warn' : 'err';
+      const title = r.status === 400
+        ? 'Запрос не разрешён в песочнице'
+        : `Ошибка ${r.status}`;
+      out.innerHTML = `<div class="card ${cls}">
+        <div class="label">${title}</div>
+        <pre style="white-space:pre-wrap;margin-top:6px">${esc(detail)}</pre>
+      </div>`;
       return;
     }
     const d = await r.json();
@@ -1998,9 +2007,23 @@ def run_sql(req: RunSQLRequest, user: str = Depends(get_user)) -> RunSQLResponse
     """@brief Выполнить SQL на demo_db (только read-only)."""
     import time
     if not _is_safe_select(req.sql):
-        raise HTTPException(status_code=400,
-                            detail="Только SELECT/WITH разрешены здесь. "
-                                   "DML/DDL не исполняем — артефакт системы это SQL+audit_log.")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "В песочнице разрешены только SELECT / WITH (в т.ч. под EXPLAIN). "
+                "DML/DDL (DELETE / UPDATE / INSERT / DROP / TRUNCATE / GRANT / ALTER) "
+                "не исполняем: EXPLAIN ANALYZE на них реально модифицирует данные demo_db.\n"
+                "\n"
+                "Что сделать вместо:\n"
+                " • для оценки плана (без исполнения) — обычный EXPLAIN без ANALYZE:\n"
+                "       EXPLAIN (FORMAT JSON) DELETE FROM ... WHERE ...;\n"
+                " • для реального времени — SELECT-прокси с тем же WHERE:\n"
+                "       EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)\n"
+                "       SELECT count(*) FROM ... WHERE ...;\n"
+                "   (получишь Execution Time сканирования по тем же строкам, "
+                "сам DELETE добавит ~write-overhead).\n"
+            ),
+        )
     try:
         import psycopg2
     except ImportError:
