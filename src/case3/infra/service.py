@@ -663,12 +663,40 @@ function renderPredictionCard(sql, traceId) {
     <div class="card" id="pc-card" data-sql="${esc(sql)}" data-trace="${esc(traceId || '')}">
       <div class="label">⏱ Аналитический прогноз времени</div>
       <div id="pc-out" style="color:var(--mut);font-size:13px">… анализирую план …</div>
+
       <div class="pc-help">
-        <label class="chip" style="cursor:pointer;user-select:none">
-          <input type="checkbox" id="pc-help-tog" style="vertical-align:middle;margin-right:6px">
-          🤝 Хочу помочь обучить — показать SQL-инструментацию для замера на моей БД
-        </label>
-        <div id="pc-help-block" style="display:none;margin-top:12px"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px">
+          <div class="label" style="margin:0">Команда для запуска у вас на БД</div>
+          <label class="chip" style="cursor:pointer;user-select:none">
+            <input type="checkbox" id="pc-help-tog" style="vertical-align:middle;margin-right:6px">
+            🤝 Хочу помочь обучить (обернёт в EXPLAIN ANALYZE)
+          </label>
+        </div>
+        <div id="pc-cmd-hint" style="font-size:12px;color:var(--mut);margin-bottom:6px"></div>
+        <div class="pc-snippet" id="pc-cmd-code"></div>
+        <div class="row" style="margin-top:8px">
+          <button class="ghost" id="pc-copy">📋 Скопировать</button>
+        </div>
+      </div>
+
+      <div id="pc-report-block" style="display:none;margin-top:14px;padding-top:12px;border-top:1px dashed #30363d">
+        <div class="label">📝 Отчёт о реальном времени</div>
+        <div style="font-size:12px;color:var(--mut);margin-bottom:8px">
+          Запусти команду выше у себя → Postgres вернёт <b>Execution Time</b> →
+          впиши его сюда. Сохраним пару (cost, real_ms) в логе; расхождение —
+          сигнал либо о нашем прогнозе, либо о пропущенном индексе у вас.
+        </div>
+        <div class="pc-report">
+          <span class="label" style="margin:0">Реальное время:</span>
+          <input type="number" id="pc-real-ms" placeholder="мс" step="0.1" min="0">
+          <select id="pc-source" style="background:#0d1117;color:var(--fg);border:1px solid #30363d;border-radius:6px;padding:6px 8px;font:13px Menlo,monospace">
+            <option value="explain_analyze">из EXPLAIN ANALYZE</option>
+            <option value="pg_stat_statements">из pg_stat_statements</option>
+            <option value="manual">руками (psql \\timing)</option>
+          </select>
+          <button id="pc-report-btn">Отправить отчёт</button>
+          <span id="pc-report-result" style="font-size:12px"></span>
+        </div>
       </div>
     </div>`;
 }
@@ -718,25 +746,46 @@ async function bindPredictionCard(sql, traceId) {
   } catch (e) {
     out.innerHTML = `<span class="err">не удалось получить прогноз: ${esc(e.message)}</span>`;
   }
-  // тоггл «хочу помочь» — открывает SQL-обёртки + поле отчёта
+  // команда + тоггл — переключает plain ↔ wrapped (EXPLAIN ANALYZE);
+  // отчёт открывается только в режиме «обёрнуто».
   const tog = $('#pc-help-tog');
-  const block = $('#pc-help-block');
-  if (tog && block) {
-    tog.onchange = () => {
-      if (tog.checked) {
-        block.innerHTML = renderHelpBlock(sql);
-        block.style.display = '';
-        const reportBtn = $('#pc-report-btn');
-        if (reportBtn) reportBtn.onclick = submitTimingReport;
-        const sbRun = $('#sb-run');
-        if (sbRun) sbRun.onclick = runSandboxSQL;
-        const sbFill = $('#sb-fill');
-        if (sbFill) sbFill.onclick = () => { const t = $('#sb-sql'); if (t) t.value = sql; };
-      } else {
-        block.style.display = 'none';
+  const reportBlock = $('#pc-report-block');
+  const code = $('#pc-cmd-code');
+  const hint = $('#pc-cmd-hint');
+  const copyBtn = $('#pc-copy');
+  const sqlClean = String(sql || '').trim().replace(/;+$/, '');
+  function _updateCmdView() {
+    if (!code || !hint) return;
+    const wrapped = tog && tog.checked;
+    if (wrapped) {
+      code.innerHTML = '<span class="kw">EXPLAIN</span> (<span class="kw">ANALYZE</span>, <span class="kw">BUFFERS</span>, <span class="kw">FORMAT</span> <span class="kw">JSON</span>)\n' + esc(sqlClean) + ';';
+      hint.innerHTML = 'скопируй и запусти у себя → Postgres вернёт <b>Execution Time</b> → впиши его в отчёт ниже';
+      if (reportBlock) reportBlock.style.display = '';
+    } else {
+      code.innerHTML = esc(sqlClean) + ';';
+      hint.innerHTML = 'скопируй и запусти у себя — отчёт необязателен';
+      if (reportBlock) reportBlock.style.display = 'none';
+    }
+  }
+  _updateCmdView();
+  if (tog) tog.onchange = _updateCmdView;
+  if (copyBtn) {
+    copyBtn.onclick = async () => {
+      const text = (tog && tog.checked)
+        ? 'EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)\n' + sqlClean + ';'
+        : sqlClean + ';';
+      try {
+        await navigator.clipboard.writeText(text);
+        const old = copyBtn.innerHTML;
+        copyBtn.textContent = '✓ скопировано';
+        setTimeout(() => { copyBtn.innerHTML = old; }, 1500);
+      } catch (e) {
+        copyBtn.textContent = '⚠ ' + (e.message || 'fail');
       }
     };
   }
+  const reportBtn = $('#pc-report-btn');
+  if (reportBtn) reportBtn.onclick = submitTimingReport;
 }
 function renderHelpBlock(sql) {
   // Песочница: пустой textarea → юзер пастит свой SQL (можно с EXPLAIN ANALYZE),
