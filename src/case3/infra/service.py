@@ -409,8 +409,7 @@ _UI_HTML = """<!doctype html>
       <div class="label">NL-задача (новый диалог)</div>
       <textarea id="task" placeholder="напр.: Удали старые черновики заявок"></textarea>
       <div class="row">
-        <button id="go">Начать</button>
-        <button class="ghost" id="go-stream" title="показать поток мыслей пайплайна (SSE)">🧠 Live</button>
+        <button id="go" title="Live SSE: видно поток «мыслей» пайплайна">🧠 Начать (Live)</button>
         <button class="ghost" id="reset" style="display:none">Сбросить диалог</button>
         <span class="chip" data-q="Сколько кредитных договоров?">агрегат</span>
         <span class="chip" data-q="Топ-5 компаний по числу договоров (count desc, name asc): name, count">join+top-N</span>
@@ -1282,7 +1281,7 @@ async function sendChat(answer /* optional — текстовый ответ ю�
   }
 }
 
-// ── старт нового диалога ──
+// ── старт нового диалога: всегда Live (SSE) ──
 const _go_btn = $('#go');
 if (_go_btn) _go_btn.onclick = () => {
   const t = $('#task').value.trim();
@@ -1291,10 +1290,10 @@ if (_go_btn) _go_btn.onclick = () => {
   _task = t;
   $('#task').value = t;
   renderUser(t);
-  sendChat();
+  sendStream();
 };
 
-// ── Live-режим: SSE с потоком мыслей (без clarify) ──
+// (старая кнопка #go-stream удалена; хендлер ниже остаётся как no-op для совместимости)
 const _stream_btn = $('#go-stream');
 if (_stream_btn) _stream_btn.onclick = () => {
   const t = $('#task').value.trim();
