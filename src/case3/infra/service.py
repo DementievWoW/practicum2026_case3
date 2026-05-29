@@ -1156,12 +1156,15 @@ async function sendStream() {
   const traceLink = traceId
     ? `<a href="http://localhost:13001/trace/${traceId}" target="_blank">
          <button class="ghost">Открыть trace ${traceId.slice(0,8)} →</button></a>` : '';
-  out.innerHTML = `
+  // Если SQL отклонён — Финальный SQL всё-таки нужен (карточки прогноза не будет).
+  const rejectedSqlCard = finalEv.approved ? '' : `
     <div class="card">
-      <div class="label">Финальный SQL</div>
+      <div class="label">Финальный SQL (отклонён аудитором)</div>
       <pre>${esc(finalEv.final_sql)}</pre>
-      <div class="row">${runBtn} ${traceLink}</div>
-    </div>
+      <div class="row"><button class="ghost" disabled>SQL отклонён аудитором — выполнить нельзя</button> ${traceLink}</div>
+    </div>`;
+  out.innerHTML = `
+    ${rejectedSqlCard}
     <div class="card">
       <div class="label">Уязвимости (последняя итерация)</div>
       ${vulnsHtml}
@@ -1261,12 +1264,15 @@ async function sendChat(answer /* optional — текстовый ответ ю�
       ? `<a href="http://localhost:13001/trace/${traceId}" target="_blank">
            <button class="ghost">Открыть trace ${traceId.slice(0,8)} в Langfuse →</button></a>`
       : '';
-    out.innerHTML = `
+    // SQL отклонён → показываем карточку с SQL, иначе SQL виден в «Команда для запуска»
+    const rejectedSqlCard = d.approved ? '' : `
       <div class="card">
-        <div class="label">Финальный SQL</div>
+        <div class="label">Финальный SQL (отклонён аудитором)</div>
         <pre>${esc(d.final_sql)}</pre>
-        <div class="row">${runBtn} ${traceLink}</div>
-      </div>
+        <div class="row"><button class="ghost" disabled>SQL отклонён аудитором — выполнить нельзя</button> ${traceLink}</div>
+      </div>`;
+    out.innerHTML = `
+      ${rejectedSqlCard}
       <div class="card">
         <div class="label">Уязвимости (последняя итерация)</div>
         ${vulnsHtml}
