@@ -183,8 +183,8 @@ def _render_vuln_pane() -> str:
           <pre class="vc-sql">{_h(v["sql"])}</pre>
           <div class="vc-why"><b>Почему опасно:</b> {_h(v["why"])}</div>
           <button class="vc-try" data-q="{_h(v["nl"])}"
-                  title="заполнит NL-вариант в Аудит и запустит цикл">
-            → Прогнать через аудит
+                  title="подставит NL-пример в поле «Аудит» — нажми «Начать», когда готов">
+            → Вставить пример в аудит
           </button>
         </div>''')
     return '<div class="vc-grid">' + "".join(items) + "</div>"
@@ -433,8 +433,8 @@ _UI_HTML = """<!doctype html>
         <span style="color:var(--ok)">зелёная INFO</span> ·
         <span style="color:var(--warn)">оранжевая PII / средний</span> ·
         <span style="color:var(--err)">красная CRITICAL / DESTRUCTIVE</span>.
-        Кнопка <b>«Прогнать через аудит»</b> отправит NL-вариант в наш пайплайн —
-        увидите, как Phase 1 правила и LLM-судья реагируют на этот класс.
+        Кнопка <b>«Вставить пример в аудит»</b> подставит NL-вариант в поле на вкладке «Аудит»,
+        а запускать цикл (или сначала отредактировать) — уже вам.
       </p>
     </div>
     <!-- VULN_CARDS -->
@@ -590,13 +590,20 @@ document.addEventListener('change', e => {
   }
 });
 
-// ── catalog «Прогнать через аудит» ──
+// ── catalog «Вставить пример» ──
+// Переключаемся на «Аудит», подставляем NL в textarea, фокус — пусть юзер
+// проверит/отредактирует и сам нажмёт «Начать».
 document.addEventListener('click', e => {
   if (e.target.classList && e.target.classList.contains('vc-try')) {
     const q = e.target.dataset.q;
     document.querySelector(".tab[data-pane='audit']").click();
-    $('#task').value = q;
-    $('#go').click();
+    const t = $('#task');
+    if (t) {
+      t.value = q;
+      t.focus();
+      t.setSelectionRange(t.value.length, t.value.length);
+      t.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
   }
 });
 
