@@ -949,15 +949,18 @@ async function runSandboxSQL() {
 }
 async function submitTimingReport() {
   const card = $('#pc-card');
+  const btn = $('#pc-report-btn');
   const realStr = $('#pc-real-ms')?.value;
   const res = $('#pc-report-result');
   if (!realStr || !card) return;
+  if (btn && btn.disabled) return;          // уже отправлен/в процессе — игнор
   const realMs = parseFloat(realStr);
   if (isNaN(realMs) || realMs < 0) {
     res.innerHTML = '<span class="err">введите число</span>';
     return;
   }
   const source = $('#pc-source')?.value || 'manual';
+  if (btn) { btn.disabled = true; btn.textContent = '… отправляю …'; }
   res.innerHTML = '<span style="color:var(--mut)">… отправляю …</span>';
   try {
     const r = await fetch('/timing/report', {
@@ -975,6 +978,7 @@ async function submitTimingReport() {
     const d = await r.json();
     if (!r.ok || !d.ok) {
       res.innerHTML = `<span class="err">не сохранено: ${esc(d.detail || d)}</span>`;
+      if (btn) { btn.disabled = false; btn.textContent = 'Отправить отчёт'; }
       return;
     }
     if (d.diff_pct != null) {
@@ -984,8 +988,10 @@ async function submitTimingReport() {
     } else {
       res.innerHTML = '<span class="ok">✓ сохранено</span>';
     }
+    if (btn) { btn.textContent = '✓ Отчёт отправлен'; }   // остаётся disabled до нового запроса
   } catch (e) {
     res.innerHTML = `<span class="err">network: ${esc(e.message)}</span>`;
+    if (btn) { btn.disabled = false; btn.textContent = 'Отправить отчёт'; }
   }
 }
 
