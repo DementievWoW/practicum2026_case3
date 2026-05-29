@@ -1085,6 +1085,10 @@ async function sendStream() {
           appendThink(thinkEl, 'gen', `🧮 генератор пишет SQL${lessons}…`, dt);
         } else if (ev.event === 'generator_done') {
           appendThink(thinkEl, 'gen', `✓ SQL готов <pre>${esc(ev.sql.slice(0,300))}</pre>`, dt);
+        } else if (ev.event === 'non_sql_output') {
+          appendThink(thinkEl, 'err',
+            `🛑 модель ответила не SQL — нужно больше контекста, ранний выход<br>` +
+            `<pre>${esc((ev.model_text || '').slice(0,400))}</pre>`, dt);
         } else if (ev.event === 'auditor_start') {
           appendThink(thinkEl, 'aud', `🛡 аудитор проверяет…`, dt);
         } else if (ev.event === 'auditor_done') {

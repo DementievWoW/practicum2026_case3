@@ -19,16 +19,27 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 from case3.contracts import (
+    AuditResult,
     IterationLog,
     SystemResult,
     SQLSecuritySystem,
+    Vulnerability,
 )
 from case3.nodes.auditor import HybridAuditor
-from case3.nodes.generator import LLMGenerator
+from case3.nodes.generator import LLMGenerator, _SQL_KEYWORDS
 from case3.nodes.reflector import Reflector
+
+
+_SQL_KW_RE = re.compile(r"\b(" + "|".join(_SQL_KEYWORDS) + r")\b", re.I)
+
+
+def _has_sql_keyword(text: str) -> bool:
+    """@brief Есть ли в тексте признак SQL-стейтмента (SELECT/WITH/...)."""
+    return bool(_SQL_KW_RE.search(text or ""))
 
 
 class SQLSecurityPipeline(SQLSecuritySystem):
@@ -79,6 +90,41 @@ class SQLSecurityPipeline(SQLSecuritySystem):
             sql_history.append(sql)
             emit({"event": "generator_done", "iteration": it, "sql": sql})
 
+            # 1b. Sanity-check: модель вернула вообще что-то похожее на SQL?
+            #     Если нет (вернула приветствие / прозу / мета-ответ) — нет смысла
+            #     гонять аудит и тратить итерации; раньше выходим с понятной причиной.
+            if not _has_sql_keyword(sql):
+                emit({"event": "non_sql_output", "iteration": it,
+                      "model_text": (sql or "")[:500]})
+                v = Vulnerability(
+                    vuln_class="NOT_A_QUERY",
+                    risk_score=10.0,
+                    description=(
+                        "Модель не вернула SQL — ответ похож на свободный текст. "
+                        "Из этого запроса нельзя построить SQL, нужно больше контекста "
+                        "или переформулировать задачу."
+                    ),
+                    recommendation=(
+                        "Опиши конкретно, какие данные нужны: «покажи …», «сколько …», "
+                        "«топ-N … по …». Укажи таблицу/сущность, если знаешь."
+                    ),
+                )
+                fake_audit = AuditResult(
+                    approved=False,
+                    overall_risk_score=10.0,
+                    vulnerabilities=[v],
+                    summary="Не похоже на SQL-задачу — нужно больше контекста.",
+                )
+                iterations_log.append(IterationLog(
+                    timestamp=datetime.now(),
+                    iteration=it,
+                    sql_query=sql,
+                    audit_result=fake_audit,
+                    revision_notes="ранний выход: не-SQL ответ модели",
+                ))
+                last_sql, last_audit = sql, fake_audit
+                break
+
             # 2. Аудит
             emit({"event": "auditor_start", "iteration": it})
             audit = self.auditor.audit(sql)
@@ -117,6 +163,11 @@ class SQLSecurityPipeline(SQLSecuritySystem):
         # Сборка человекочитаемого лога
         audit_log = self._render_log(iterations_log)
 
+        non_sql_exit = any(
+            v.vuln_class == "NOT_A_QUERY"
+            for il in iterations_log
+            for v in il.audit_result.vulnerabilities
+        )
         return SystemResult(
             final_sql=last_sql,
             approved=last_audit.approved if last_audit else False,
@@ -126,6 +177,7 @@ class SQLSecurityPipeline(SQLSecuritySystem):
             metadata={
                 "risk_trajectory": [il.audit_result.overall_risk_score for il in iterations_log],
                 "reflection_final": [str(l) for l in reflection],
+                "early_exit": "non_sql_output" if non_sql_exit else None,
             },
         )
 
