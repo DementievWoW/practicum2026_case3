@@ -840,44 +840,8 @@ async function bindPredictionCard(sql, traceId) {
     traceBottom.style.display = '';
   }
 }
-function renderHelpBlock(sql) {
-  // Песочница: пустой textarea → юзер пастит свой SQL (можно с EXPLAIN ANALYZE),
-  // жмёт «Выполнить», смотрит реальное время и руками переносит в отчёт.
-  return `
-    <div class="label">🧪 Тестовая БД (имитация prod-нагрузки)</div>
-    <div style="font-size:12px;color:var(--mut);margin-bottom:8px">
-      Вставь сюда SQL и запусти. Поддерживается <b>EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) …</b> —
-      Postgres вернёт реальное время выполнения и per-op разбивку.
-    </div>
-    <textarea id="sb-sql" rows="5" placeholder="Вставьте SQL (например: EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT count(*) FROM credit_contract;)" style="width:100%;background:#0d1117;color:var(--fg);border:1px solid #30363d;border-radius:6px;padding:10px;font:13px ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical"></textarea>
-    <div class="row" style="margin-top:8px">
-      <button id="sb-run">Выполнить на тестовой БД</button>
-      <button class="ghost" id="sb-fill" title="подставит финальный SQL сверху">📋 Вставить финальный SQL</button>
-      <label class="chip" style="cursor:pointer;user-select:none">
-        <input type="checkbox" id="sb-explain" style="vertical-align:middle;margin-right:4px">
-        🔬 авто-обернуть в EXPLAIN ANALYZE
-      </label>
-    </div>
-    <div id="sb-out" style="margin-top:12px"></div>
-
-    <div style="margin-top:18px;padding-top:14px;border-top:1px dashed #30363d">
-      <div class="label">📝 Отчёт о реальном времени</div>
-      <div style="font-size:12px;color:var(--mut);margin-bottom:8px">
-        Скопируй <b>Execution Time</b> из результата выше и впиши сюда — пара (cost, real_ms)
-        запишется в лог. Расхождение покажет: либо наш прогноз плохой, либо у БД нужен индекс.
-      </div>
-      <div class="pc-report">
-        <span class="label" style="margin:0">Реальное время:</span>
-        <input type="number" id="pc-real-ms" placeholder="мс" step="0.1" min="0">
-        <select id="pc-source" style="background:#0d1117;color:var(--fg);border:1px solid #30363d;border-radius:6px;padding:6px 8px;font:13px Menlo,monospace">
-          <option value="explain_analyze">из EXPLAIN ANALYZE</option>
-          <option value="manual">руками (psql \\timing)</option>
-        </select>
-        <button id="pc-report-btn">Отправить отчёт</button>
-        <span id="pc-report-result" style="font-size:12px"></span>
-      </div>
-    </div>`;
-}
+// (renderHelpBlock удалён — устаревший каркас песочницы с дублирующими ID;
+// актуальный UI собирается из renderSandboxCard + renderPredictionCard)
 function renderSandboxCard(sql) {
   return `
     <div class="card" id="sb-card" data-sql="${esc(sql)}">
@@ -891,10 +855,6 @@ function renderSandboxCard(sql) {
       <div class="row" style="margin-top:8px">
         <button id="sb-run">Выполнить</button>
         <button class="ghost" id="sb-fill" title="подставит финальный SQL сверху">📋 Вставить финальный SQL</button>
-        <label class="chip" style="cursor:pointer;user-select:none">
-          <input type="checkbox" id="sb-explain" style="vertical-align:middle;margin-right:4px">
-          🔬 авто-обернуть в EXPLAIN ANALYZE
-        </label>
       </div>
       <div id="sb-out" style="margin-top:12px"></div>
     </div>`;
@@ -909,20 +869,13 @@ async function runSandboxSQL() {
   const sqlEl = $('#sb-sql');
   const out = $('#sb-out');
   const btn = $('#sb-run');
-  const autoExplain = $('#sb-explain')?.checked || false;
   if (!sqlEl || !out) return;
   const raw = (sqlEl.value || '').trim();
   if (!raw) { out.innerHTML = '<div class="card warn">введите SQL</div>'; return; }
   btn.disabled = true;
   out.innerHTML = '<div class="card">… выполняю на тестовой БД (read-only, timeout 5s) …</div>';
-  // Если юзер сам обернул в EXPLAIN — отправляем как есть (explain=false на бэке),
-  // если попросил авто-обернуть — флаг explain=true (бэк делает EXPLAIN ANALYZE и парсит план).
-  const alreadyExplain = /^\\s*explain/i.test(raw);
-  const payload = alreadyExplain
-    ? { sql: raw, explain: false }
-    : (autoExplain
-        ? { sql: raw, explain: true }
-        : { sql: raw, explain: false });
+  // Отправляем SQL как есть — никаких обёрток. Хочешь EXPLAIN ANALYZE — напиши сам.
+  const payload = { sql: raw, explain: false };
   try {
     const r = await fetch('/run-sql', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
