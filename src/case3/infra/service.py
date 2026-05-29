@@ -758,7 +758,7 @@ async function bindPredictionCard(sql, traceId) {
     if (!code || !hint) return;
     const wrapped = tog && tog.checked;
     if (wrapped) {
-      code.innerHTML = '<span class="kw">EXPLAIN</span> (<span class="kw">ANALYZE</span>, <span class="kw">BUFFERS</span>, <span class="kw">FORMAT</span> <span class="kw">JSON</span>)\n' + esc(sqlClean) + ';';
+      code.innerHTML = '<span class="kw">EXPLAIN</span> (<span class="kw">ANALYZE</span>, <span class="kw">BUFFERS</span>, <span class="kw">FORMAT</span> <span class="kw">JSON</span>)\\n' + esc(sqlClean) + ';';
       hint.innerHTML = 'скопируй и запусти у себя → Postgres вернёт <b>Execution Time</b> → впиши его в отчёт ниже';
       if (reportBlock) reportBlock.style.display = '';
     } else {
@@ -772,7 +772,7 @@ async function bindPredictionCard(sql, traceId) {
   if (copyBtn) {
     copyBtn.onclick = async () => {
       const text = (tog && tog.checked)
-        ? 'EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)\n' + sqlClean + ';'
+        ? 'EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)\\n' + sqlClean + ';'
         : sqlClean + ';';
       try {
         await navigator.clipboard.writeText(text);
