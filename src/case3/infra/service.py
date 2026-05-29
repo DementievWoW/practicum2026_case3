@@ -182,10 +182,14 @@ def _render_vuln_pane() -> str:
           <div class="label" style="margin-top:10px">Пример SQL</div>
           <pre class="vc-sql">{_h(v["sql"])}</pre>
           <div class="vc-why"><b>Почему опасно:</b> {_h(v["why"])}</div>
-          <button class="vc-try" data-q="{_h(v["nl"])}"
-                  title="подставит NL-пример в поле «Аудит» — нажми «Начать», когда готов">
-            → Вставить пример в аудит
-          </button>
+          <div class="row" style="gap:6px;margin-top:12px">
+            <button class="vc-try" data-q="{_h(v["nl"])}"
+                    title="подставит NL-пример в поле «Аудит» — пройдёт через генератор + аудит"
+                    style="flex:1">Вставить NL в поле</button>
+            <button class="vc-audit" data-sql="{_h(v["sql"])}" data-label="{_h(v["code"])}"
+                    title="отправит ЭТОТ SQL сразу в аудитор (без генератора) — гарантированно сработает класс"
+                    style="flex:1">Сразу аудит этого SQL</button>
+          </div>
         </div>''')
     return '<div class="vc-grid">' + "".join(items) + "</div>"
 
@@ -598,9 +602,7 @@ document.addEventListener('change', e => {
   }
 });
 
-// ── catalog «Вставить пример» ──
-// Переключаемся на «Аудит», подставляем NL в textarea, фокус — пусть юзер
-// проверит/отредактирует и сам нажмёт «Начать».
+// ── catalog: «Вставить NL в поле» (через генератор) ──
 document.addEventListener('click', e => {
   if (e.target.classList && e.target.classList.contains('vc-try')) {
     const q = e.target.dataset.q;
@@ -612,6 +614,62 @@ document.addEventListener('click', e => {
       t.setSelectionRange(t.value.length, t.value.length);
       t.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
+  }
+});
+
+// ── catalog: «Сразу аудит этого SQL» (минуя генератор) ──
+document.addEventListener('click', async e => {
+  if (!e.target.classList || !e.target.classList.contains('vc-audit')) return;
+  const sql = e.target.dataset.sql;
+  const label = e.target.dataset.label || 'audit-sql';
+  if (!sql) return;
+  document.querySelector(".tab[data-pane='audit']").click();
+  resetDialog();
+  _task = '[' + label + '] ' + sql;
+  renderUser('Прямой аудит примера: ' + label);
+  out.innerHTML = '<div class="card">… аудитор проверяет SQL из карточки …</div>';
+  try {
+    const r = await fetch('/audit-sql', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ sql, label })
+    });
+    if (!r.ok) {
+      const err = await r.text();
+      out.innerHTML = `<div class="card err">HTTP ${r.status}: ${esc(err)}</div>`;
+      return;
+    }
+    const d = await r.json();
+    // Подмешаем поля до тех, что ожидает chat-sql ветка рендера:
+    d.trace_id = (d.metadata && d.metadata.trace_id) || null;
+    _lastSQL = d.final_sql; _lastApproved = d.approved;
+    const verdict = d.approved
+      ? '<span class="ok">approved</span>'
+      : '<span class="err">rejected</span>';
+    const traj = (d.risk_trajectory || []).map(x => x.toFixed(1)).join(' → ');
+    const pms = ((d.metadata && d.metadata.pipeline_ms) || 0).toFixed(0);
+    renderBot(`SQL из каталога (${esc(label)}) · ${verdict} · риск <b>${traj}</b> · аудит <b>${pms} мс</b>`);
+    const vulnsHtml = (d.vulnerabilities || []).map(v => `
+      <div class="vuln ${v.risk_score < 4 ? 'low':''}">
+        <b>${esc(v.vuln_class)}</b> · risk ${v.risk_score.toFixed(1)}<br>
+        ${esc(v.description)}<br>
+        <small class="ok">↳ ${esc(v.recommendation || '')}</small>
+      </div>`).join('') || '<div class="ok">уязвимостей не найдено</div>';
+    out.innerHTML = `
+      <div class="card">
+        <div class="label">SQL из каталога (${esc(label)})</div>
+        <pre>${esc(d.final_sql)}</pre>
+      </div>
+      <div class="card">
+        <div class="label">Уязвимости</div>
+        ${vulnsHtml}
+      </div>
+      <div class="card">
+        <div class="label">Audit log</div>
+        <pre>${esc(d.audit_log)}</pre>
+      </div>`;
+    $('#reset').style.display = '';
+  } catch (err) {
+    out.innerHTML = `<div class="card err">network: ${esc(err.message)}</div>`;
   }
 });
 
@@ -1602,6 +1660,70 @@ def audit(req: AuditRequest, user: str = Depends(get_user)) -> AuditResponse:
         audit_log=res.audit_log,
         metadata=res.metadata,
     )
+
+
+# ─── /audit-sql: «аудит готового SQL» (минуя генератор) ─────────────────────
+# Используется кнопкой «Аудит этого SQL» в каталоге уязвимостей:
+# жюри жмёт, видит ровно тот SQL из примера прогнанным через Phase 1+2.
+# Не итеративный, без reflection — одна итерация, один аудит, готово.
+class AuditSqlRequest(BaseModel):
+    sql: str = Field(..., min_length=3, max_length=10000)
+    label: str | None = None       # опц. подпись (имя класса из каталога)
+
+
+@app.post("/audit-sql", response_model=AuditResponse)
+def audit_sql(req: AuditSqlRequest, user: str = Depends(get_user)) -> AuditResponse:
+    """@brief Прогоняет переданный SQL через аудитор (без генерации)."""
+    import time as _time
+    from case3.contracts import IterationLog
+    from case3.nodes.auditor import HybridAuditor
+
+    t0 = _time.perf_counter()
+    try:
+        auditor = HybridAuditor()
+        audit = auditor.audit(req.sql)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"auditor error: {e}")
+    dt_ms = round((_time.perf_counter() - t0) * 1000.0, 2)
+
+    vulns = [VulnOut(vuln_class=v.vuln_class, risk_score=v.risk_score,
+                     description=v.description, recommendation=v.recommendation)
+             for v in audit.vulnerabilities]
+    # Лог в формате, похожем на pipeline._render_log
+    vuln_block = "\n".join(
+        f"  ⚠ {v.vuln_class} ({v.risk_score:.1f}): {v.description}"
+        for v in audit.vulnerabilities
+    ) or "  (уязвимостей не найдено)"
+    audit_log = (
+        f"=== AUDIT LOG (только аудит, без генератора) ===\n\n"
+        f"--- Итерация 1 ---\n"
+        f"SQL: {req.sql}\n"
+        f"Риск: {audit.overall_risk_score:.1f}  Одобрено: {audit.approved}\n"
+        f"{vuln_block}\n"
+        f"Вердикт: {audit.summary}"
+    )
+    label = req.label or "audit-sql"
+    ev.log_event(
+        user=user, endpoint="/audit-sql", task=label, sql=req.sql,
+        approved=audit.approved, iterations=1,
+        vuln_classes=[v.vuln_class for v in vulns],
+    )
+    return AuditResponse(
+        final_sql=req.sql,
+        approved=audit.approved,
+        iterations_used=1,
+        risk_trajectory=[audit.overall_risk_score],
+        vulnerabilities=vulns,
+        audit_log=audit_log,
+        metadata={
+            "pipeline_ms": dt_ms,
+            "iteration_ms": [],
+            "audit_only": True,
+            "source_label": label,
+        },
+    )
+
+
 # Stateless: UI шлёт всю историю каждый раз. Сервер либо возвращает clarify
 # (question + options), либо запускает полный pipeline (run_instrumented).
 # До MAX_CLARIFY_ROUNDS=2 уточнений; на третьем — force_sql.
