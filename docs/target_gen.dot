@@ -39,7 +39,7 @@ digraph Gen {
         <tr><td align="left">ЗАЧЕМ: дать LLM весь контекст</td></tr>
         <tr><td bgcolor="#A5D6A7">🟢 каркас готов · generator.py</td></tr></table>>];
     g_llm [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
-        <tr><td><b>LLM генератор · Qwen2.5-Coder-32B</b></td></tr>
+        <tr><td><b>LLM генератор · Qwen2.5-Coder-32B-Instruct</b></td></tr>
         <tr><td align="left">@brief промпт → SQL</td></tr>
         <tr><td align="left">ЗАЧЕМ: ядро — понять NL и написать SQL</td></tr>
         <tr><td bgcolor="#FF8A65"><b>🟧 МОК · mock.py → Участник 3</b></td></tr></table>>];

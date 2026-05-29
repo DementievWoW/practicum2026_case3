@@ -31,7 +31,7 @@ digraph Core {
         label="Reflector — in-context loop · Участник 3";
         labeljust="l"; fontsize=12; style="rounded,filled"; color="#8E24AA"; fillcolor="#F3E5F5";
         refl_model [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
-            <tr><td><b>reflector · Qwen-7B / FLAN-T5</b></td></tr>
+            <tr><td><b>reflector · Qwen2.5-7B-Instruct / FLAN-T5</b></td></tr>
             <tr><td align="left">@brief findings судьи → «урок»</td></tr>
             <tr><td align="left">ЗАЧЕМ: генератор не повторяет ошибку</td></tr>
             <tr><td bgcolor="#FFCC80">🟧 ЗАГЛУШКА (детермин.) · reflector.py · Участник 3</td></tr></table>>];

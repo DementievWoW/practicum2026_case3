@@ -57,7 +57,7 @@ digraph Judge {
             <tr><td align="left">ЗАЧЕМ: знания + верифицируемые ссылки</td></tr>
             <tr><td bgcolor="#ECEFF1">⬜ не написано → Участник 2</td></tr></table>>];
         judge_llm [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
-            <tr><td><b>LLM судья · Qwen2.5-7B</b></td></tr>
+            <tr><td><b>LLM судья · Qwen2.5-7B-Instruct</b></td></tr>
             <tr><td align="left">@brief триаж findings + объяснение</td></tr>
             <tr><td align="left">ЗАЧЕМ: отсеять FP, дать рекомендацию</td></tr>
             <tr><td bgcolor="#FF8A65"><b>🟧 МОК · mock.py · модель: Участник 3</b></td></tr></table>>];

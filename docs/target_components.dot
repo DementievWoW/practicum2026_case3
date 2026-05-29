@@ -86,7 +86,7 @@ digraph Target {
             <tr><td align="left">ЗАЧЕМ: дать LLM весь контекст</td></tr>
             <tr><td bgcolor="#A5D6A7">🟢 каркас готов · generator.py</td></tr></table>>];
         g_llm [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
-            <tr><td><b>LLM генератор · Qwen2.5-Coder-32B</b></td></tr>
+            <tr><td><b>LLM генератор · Qwen2.5-Coder-32B-Instruct</b></td></tr>
             <tr><td align="left">@brief промпт → SQL</td></tr>
             <tr><td align="left">ЗАЧЕМ: ядро — понять NL и написать SQL</td></tr>
             <tr><td bgcolor="#FF8A65"><b>🟧 МОК · mock.py → Участник 3</b></td></tr></table>>];
@@ -144,7 +144,7 @@ digraph Target {
                 <tr><td align="left">ЗАЧЕМ: знания + верифицируемые ссылки</td></tr>
                 <tr><td bgcolor="#ECEFF1">⬜ не написано → Участник 2</td></tr></table>>];
             judge_llm [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
-                <tr><td><b>LLM судья · Qwen2.5-7B</b></td></tr>
+                <tr><td><b>LLM судья · Qwen2.5-7B-Instruct</b></td></tr>
                 <tr><td align="left">@brief триаж findings + объяснение</td></tr>
                 <tr><td align="left">ЗАЧЕМ: отсеять FP, дать рекомендацию</td></tr>
                 <tr><td bgcolor="#FF8A65"><b>🟧 МОК · mock.py · модель: Участник 3</b></td></tr></table>>];
@@ -165,7 +165,7 @@ digraph Target {
         labeljust="l"; fontsize=13; fontname="Helvetica-Bold";
         style="rounded,filled"; color="#2E7D32"; fillcolor="#E8F5E9";
         refl_model [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFB74D">
-            <tr><td><b>reflector · Qwen-7B / FLAN-T5</b></td></tr>
+            <tr><td><b>reflector · Qwen2.5-7B-Instruct / FLAN-T5</b></td></tr>
             <tr><td align="left">@brief findings судьи → «урок»</td></tr>
             <tr><td align="left">ЗАЧЕМ: генератор не повторяет ошибку</td></tr>
             <tr><td bgcolor="#FFCC80">🟧 ЗАГЛУШКА (детермин.) · reflector.py · Участник 3</td></tr></table>>];

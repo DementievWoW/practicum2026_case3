@@ -28,7 +28,7 @@ digraph Flow {
         style="rounded,filled"; color="#FB8C00"; fillcolor="#FFF3E0";
         g1 [label="② schema linking\nFAISS top-15 + FK", shape=box, fillcolor="#FFE0B2", color="#FB8C00"];
         g2 [label="③ сборка промпта\nDDL + few-shot + уроки", shape=box, fillcolor="#FFE0B2", color="#FB8C00"];
-        g3 [label="④ LLM генератор\nQwen-32B → SQL", shape=box, fillcolor="#FFCC80", color="#EF6C00"];
+        g3 [label="④ LLM генератор\nQwen2.5-Coder-32B-Instruct → SQL", shape=box, fillcolor="#FFCC80", color="#EF6C00"];
         g1 -> g2 -> g3;
     }
 

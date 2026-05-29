@@ -20,7 +20,7 @@ digraph Overview {
 
     gen [label=<<table border="0" cellborder="1" cellspacing="0" bgcolor="#FFF3E0">
         <tr><td bgcolor="#FB8C00"><font color="white"><b>② Генератор SQL · Участник 3</b></font></td></tr>
-        <tr><td align="left">эмбеддинг вопроса → schema linking → FK → промпт → LLM (Qwen-32B)</td></tr>
+        <tr><td align="left">эмбеддинг вопроса → schema linking → FK → промпт → LLM (Qwen2.5-Coder-32B-Instruct)</td></tr>
         <tr><td align="left">статус: 🟢2 готово · 🟧1 МОК LLM · ⬜3 не написано</td></tr>
         <tr><td><i>детали → target_gen.png</i></td></tr></table>>];
 
