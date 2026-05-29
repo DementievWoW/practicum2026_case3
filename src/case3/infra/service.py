@@ -578,9 +578,18 @@ $$('.tab').forEach(t => {
   };
 });
 
-// ── chips ──
+// ── chips: подставляют пример в поле, НЕ запускают авто (как и vc-try) ──
 $$('.chip').forEach(c => {
-  c.onclick = () => { $('#task').value = c.dataset.q; $('#go').click(); };
+  // у чек-боксов внутри .chip уже есть свой data-q? пропустим тоггл-чипы
+  if (!c.dataset.q) return;
+  c.onclick = () => {
+    const t = $('#task');
+    if (!t) return;
+    t.value = c.dataset.q;
+    t.focus();
+    t.setSelectionRange(t.value.length, t.value.length);
+    t.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
 });
 
 // ── persist explain-toggle state ──
@@ -866,6 +875,33 @@ function renderHelpBlock(sql) {
       </div>
     </div>`;
 }
+function renderSandboxCard(sql) {
+  return `
+    <div class="card" id="sb-card" data-sql="${esc(sql)}">
+      <div class="label">🧪 Песочница — тестовая БД (demo_db)</div>
+      <div style="font-size:12px;color:var(--mut);margin-bottom:8px">
+        Свободный SQL на нашей demo_db (60 таблиц, faker, 500 строк/таблица). Поддерживается
+        <b>EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) …</b> — Postgres вернёт реальное время.
+        Цифры локальные, не репрезентативны для прода — для своей БД используй команду из карточки прогноза выше.
+      </div>
+      <textarea id="sb-sql" rows="5" placeholder="EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)&#10;SELECT count(*) FROM credit_contract;" style="width:100%;background:#0d1117;color:var(--fg);border:1px solid #30363d;border-radius:6px;padding:10px;font:13px ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button id="sb-run">Выполнить</button>
+        <button class="ghost" id="sb-fill" title="подставит финальный SQL сверху">📋 Вставить финальный SQL</button>
+        <label class="chip" style="cursor:pointer;user-select:none">
+          <input type="checkbox" id="sb-explain" style="vertical-align:middle;margin-right:4px">
+          🔬 авто-обернуть в EXPLAIN ANALYZE
+        </label>
+      </div>
+      <div id="sb-out" style="margin-top:12px"></div>
+    </div>`;
+}
+function bindSandboxCard(sql) {
+  const sbRun = $('#sb-run');
+  const sbFill = $('#sb-fill');
+  if (sbRun) sbRun.onclick = runSandboxSQL;
+  if (sbFill && sql) sbFill.onclick = () => { const t = $('#sb-sql'); if (t) t.value = sql; };
+}
 async function runSandboxSQL() {
   const sqlEl = $('#sb-sql');
   const out = $('#sb-out');
@@ -1128,6 +1164,7 @@ async function sendStream() {
       ${vulnsHtml}
     </div>
     ${finalEv.approved ? renderPredictionCard(finalEv.final_sql, traceId) : ''}
+    ${finalEv.approved ? renderSandboxCard(finalEv.final_sql) : ''}
     <div class="card">
       <div class="label">Audit log</div>
       <pre>${esc(finalEv.audit_log)}</pre>
@@ -1141,13 +1178,16 @@ async function sendStream() {
   }
   const runBtnEl = $('#run-sql');
   if (runBtnEl) runBtnEl.onclick = runApprovedSQL;
-  if (finalEv.approved) bindPredictionCard(finalEv.final_sql, traceId);
+  if (finalEv.approved) { bindPredictionCard(finalEv.final_sql, traceId); bindSandboxCard(finalEv.final_sql); }
   bindFeedback(finalEv);
   $('#reset').style.display = '';
 }
 
 // ── отправить очередной ход в /chat ──
+let _chatInFlight = false;          // защита от двойного клика «Начать»/опции
 async function sendChat(answer /* optional — текстовый ответ юзера на clarify */) {
+  if (_chatInFlight) return;        // игнорим дубль до завершения предыдущего
+  _chatInFlight = true;
   if (answer) {
     _history.push({role:'user', content: answer});
     renderUser(answer);
@@ -1226,6 +1266,7 @@ async function sendChat(answer /* optional — текстовый ответ ю�
         ${vulnsHtml}
       </div>
       ${d.approved ? renderPredictionCard(d.final_sql, traceId) : ''}
+      ${d.approved ? renderSandboxCard(d.final_sql) : ''}
       <div class="card">
         <div class="label">Audit log</div>
         <pre>${esc(d.audit_log)}</pre>
@@ -1239,11 +1280,13 @@ async function sendChat(answer /* optional — текстовый ответ ю�
     }
     const runBtnEl = $('#run-sql');
     if (runBtnEl) runBtnEl.onclick = runApprovedSQL;
-    if (d.approved) bindPredictionCard(d.final_sql, traceId);
+    if (d.approved) { bindPredictionCard(d.final_sql, traceId); bindSandboxCard(d.final_sql); }
     bindFeedback(d);
     $('#reset').style.display = '';
   } catch (e) {
     out.innerHTML = `<div class="card err">network error: ${esc(e.message)}</div>`;
+  } finally {
+    _chatInFlight = false;          // снимаем single-flight guard в любом случае
   }
 }
 
