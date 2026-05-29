@@ -1184,9 +1184,12 @@ async function sendStream() {
   if (!finalEv) return;
   _lastSQL = finalEv.final_sql;
   _lastApproved = finalEv.approved;
-  const verdict = finalEv.approved
-    ? '<span class="ok">✓ approved</span>'
-    : '<span class="err">✗ rejected</span>';
+  const _nVulns = (finalEv.vulnerabilities || []).length;
+  const verdict = !finalEv.approved
+    ? '<span class="err">✗ rejected</span>'
+    : _nVulns > 0
+      ? `<span class="warn">⚠ approved с предупреждениями (${_nVulns})</span>`
+      : '<span class="ok">✓ approved (чисто)</span>';
   const traj = (finalEv.risk_trajectory || []).map(x => x.toFixed(1)).join(' → ');
   const _pipeMs = (finalEv.pipeline_ms || 0).toFixed(0);
   const _iterMs = (finalEv.iteration_ms || []).map(x => x.toFixed(0)).join(' + ');
@@ -1290,9 +1293,12 @@ async function sendChat(answer /* optional — текстовый ответ ю�
     // d.type === 'sql' — финальный результат
     _lastSQL = d.final_sql;
     _lastApproved = d.approved;
-    const verdict = d.approved
-      ? '<span class="ok">✓ approved</span>'
-      : '<span class="err">✗ rejected</span>';
+    const _nVulnsChat = (d.vulnerabilities || []).length;
+    const verdict = !d.approved
+      ? '<span class="err">✗ rejected</span>'
+      : _nVulnsChat > 0
+        ? `<span class="warn">⚠ approved с предупреждениями (${_nVulnsChat})</span>`
+        : '<span class="ok">✓ approved (чисто)</span>';
     const traj = (d.risk_trajectory || []).map(x => x.toFixed(1)).join(' → ');
     const _pMs = ((d.metadata && d.metadata.pipeline_ms) || 0).toFixed(0);
     const _iMs = ((d.metadata && d.metadata.iteration_ms) || []).map(x => x.toFixed(0)).join(' + ');
