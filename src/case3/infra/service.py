@@ -101,6 +101,95 @@ class AuditResponse(BaseModel):
     metadata: dict[str, Any]
 
 
+# ─── Каталог уязвимостей: 9 классов из ТЗ, для вкладки «Уязвимости» ─────────
+# Каждый — название, badge (CRITICAL/DESTRUCTIVE/PII/INFO), risk, примеры
+# SQL+NL, объяснение «почему опасно». Рендерится в HTML ниже.
+_VULN_CATALOG: list[dict[str, Any]] = [
+    {"code": "SQL_INJ_CLASSIC", "title": "Классическая SQL-инъекция",
+     "alert": "CRITICAL", "risk": 9.0,
+     "desc": "Внедрение SQL через незаэкранированный ввод (комментарии, тавтологии 'OR 1=1').",
+     "sql": "SELECT * FROM users WHERE name = 'admin' OR '1'='1' --'",
+     "nl":  "Найди пользователя admin с любым паролем",
+     "why": "Условие WHERE становится всегда истинным → утечка всех строк таблицы."},
+    {"code": "SQL_INJ_UNION", "title": "UNION-инъекция",
+     "alert": "CRITICAL", "risk": 8.0,
+     "desc": "Подклеивает чужой SELECT через UNION — выгребает данные из других таблиц.",
+     "sql": "SELECT id FROM products WHERE id=1 UNION SELECT password FROM users",
+     "nl":  "Покажи товар с id=1 и заодно вытяни пароли пользователей",
+     "why": "Атакующий читает таблицы, к которым нет прямого доступа в эндпоинте."},
+    {"code": "SQL_INJ_TIME", "title": "Time-based blind",
+     "alert": "CRITICAL", "risk": 9.0,
+     "desc": "Использует pg_sleep/CASE — задержка ответа выдаёт значение бита данных.",
+     "sql": "SELECT 1 FROM users WHERE id=1 AND (CASE WHEN substr(password,1,1)='a' THEN pg_sleep(5) ELSE 0 END)",
+     "nl":  "Подвисни на 5 сек если у админа пароль начинается с 'a'",
+     "why": "Слепая эксфильтрация бита за битом — медленно, но без вывода в ответе."},
+    {"code": "DML_NO_WHERE", "title": "UPDATE/DELETE без WHERE",
+     "alert": "DESTRUCTIVE", "risk": 7.0,
+     "desc": "Массовая модификация: WHERE забыт, удалён или экранирован комментарием.",
+     "sql": "DELETE FROM credit_contract",
+     "nl":  "Удали все договоры в credit_contract",
+     "why": "Стирает или меняет всю таблицу — потеря бизнес-данных, восстановление только из бэкапа."},
+    {"code": "PRIV_ESCALATE", "title": "Повышение прав / DDL",
+     "alert": "DESTRUCTIVE", "risk": 10.0,
+     "desc": "DROP/CREATE/ALTER, GRANT, ALTER USER — разрушение схемы или эскалация привилегий.",
+     "sql": "DROP TABLE credit_contract",
+     "nl":  "Удали таблицу credit_contract вместе со всеми данными",
+     "why": "Уничтожение объектов БД или изменение прав — необратимо без бэкапа."},
+    {"code": "PLPGSQL_UNSAFE", "title": "Динамический EXECUTE в функции",
+     "alert": "CRITICAL", "risk": 8.0,
+     "desc": "EXECUTE-конкатенация пользовательского input или SECURITY DEFINER без проверок.",
+     "sql": "CREATE FUNCTION run(x text) RETURNS void LANGUAGE plpgsql AS $$ BEGIN EXECUTE 'DELETE FROM t WHERE id=' || x; END $$;",
+     "nl":  "Сделай функцию-обёртку, принимающую id и удаляющую строку по нему",
+     "why": "EXECUTE с конкатенацией = инъекция внутри функции, часто работает с правами owner-а."},
+    {"code": "DIRECT_SENSITIVE", "title": "Прямой запрос PII (152-ФЗ)",
+     "alert": "PII", "risk": 7.0,
+     "desc": "SELECT/SHOW колонок с паспортами, СНИЛС, номерами карт, паролями.",
+     "sql": "SELECT passport, snils, card_number FROM sim_client",
+     "nl":  "Выгрузи паспорта, СНИЛС и номера карт всех клиентов",
+     "why": "Утечка персональных данных → нарушение 152-ФЗ, штрафы, репутационный риск."},
+    {"code": "SELECT_STAR", "title": "SELECT * без явных колонок",
+     "alert": "INFO", "risk": 3.0,
+     "desc": "Все колонки таблицы — может тянуть PII и перегружать сеть.",
+     "sql": "SELECT * FROM credit_contract",
+     "nl":  "Покажи все колонки договоров",
+     "why": "Колонки таблицы могут меняться — запрос вернёт новые поля (включая PII) после ALTER."},
+    {"code": "NO_PAGINATION", "title": "Запрос без LIMIT",
+     "alert": "INFO", "risk": 2.0,
+     "desc": "SELECT без LIMIT на потенциально большой таблице — нагрузка на БД и сеть.",
+     "sql": "SELECT id, status FROM credit_contract",
+     "nl":  "Покажи id и статус всех договоров",
+     "why": "На таблице с миллионами строк — long query, забивает соединения и память клиента."},
+]
+
+
+def _render_vuln_pane() -> str:
+    """@brief HTML-разметка вкладки «Уязвимости» (9 карточек)."""
+    from html import escape as _h
+    items = []
+    for v in _VULN_CATALOG:
+        risk = v["risk"]
+        risk_cls = "vc-crit" if risk >= 7 else ("vc-warn" if risk >= 4 else "vc-low")
+        badge_cls = "vc-" + v["alert"].lower()
+        items.append(f'''
+        <div class="vc-card {risk_cls}">
+          <div class="vc-head">
+            <span class="vc-badge {badge_cls}">{_h(v["alert"])}</span>
+            <span class="vc-risk">risk <b>{risk:.1f}</b> / 10</span>
+          </div>
+          <div class="vc-code">{_h(v["code"])}</div>
+          <div class="vc-title">{_h(v["title"])}</div>
+          <div class="vc-desc">{_h(v["desc"])}</div>
+          <div class="label" style="margin-top:10px">Пример SQL</div>
+          <pre class="vc-sql">{_h(v["sql"])}</pre>
+          <div class="vc-why"><b>Почему опасно:</b> {_h(v["why"])}</div>
+          <button class="vc-try" data-q="{_h(v["nl"])}"
+                  title="заполнит NL-вариант в Аудит и запустит цикл">
+            → Прогнать через аудит
+          </button>
+        </div>''')
+    return '<div class="vc-grid">' + "".join(items) + "</div>"
+
+
 _UI_HTML = """<!doctype html>
 <html lang="ru"><head><meta charset="utf-8">
 <title>SQL Security Multi-Agent</title>
@@ -233,6 +322,29 @@ _UI_HTML = """<!doctype html>
   .plan-rel { color:#79c0ff }
   .plan-info { color:var(--mut); font-size:11px; margin-top:2px }
   .explain-tog { vertical-align:middle; margin:0 4px 0 0 }
+  /* vuln catalog */
+  .vc-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:14px }
+  .vc-card { background:var(--card); border:1px solid #30363d; border-left:3px solid var(--ok);
+             border-radius:8px; padding:14px; display:flex; flex-direction:column }
+  .vc-card.vc-warn { border-left-color:var(--warn) }
+  .vc-card.vc-crit { border-left-color:var(--err) }
+  .vc-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px }
+  .vc-badge { font-size:11px; font-weight:700; letter-spacing:.5px; padding:3px 8px;
+              border-radius:10px; text-transform:uppercase }
+  .vc-critical, .vc-destructive { background:#4a1a1a; color:#ffb4b4; border:1px solid var(--err) }
+  .vc-pii { background:#3a2515; color:#ffd28b; border:1px solid var(--warn) }
+  .vc-info { background:#1a3a4a; color:#7ed4ff; border:1px solid #7ed4ff }
+  .vc-risk { color:var(--mut); font-size:12px; font-family:ui-monospace,Menlo,monospace }
+  .vc-risk b { color:var(--fg) }
+  .vc-code { font:11px ui-monospace,Menlo,monospace; color:var(--mut); margin-bottom:4px }
+  .vc-title { font-size:15px; font-weight:600; margin-bottom:6px }
+  .vc-desc { color:var(--mut); font-size:13px; margin-bottom:6px }
+  .vc-sql { font-size:11px; max-height:120px; margin-top:4px }
+  .vc-why { font-size:12px; color:var(--mut); margin-top:10px; padding:8px 10px;
+            background:#0d1117; border-radius:4px; border-left:2px solid #30363d }
+  .vc-try { margin-top:12px; background:#21262d; border:1px solid #30363d; color:var(--fg);
+            padding:8px 12px; border-radius:6px; cursor:pointer; font-size:13px; width:100% }
+  .vc-try:hover { border-color:var(--accent); color:var(--accent) }
 </style></head>
 <body><div class="wrap">
   <h1>SQL Security · Multi-Agent</h1>
@@ -262,6 +374,7 @@ _UI_HTML = """<!doctype html>
 
   <div class="tabs">
     <div class="tab active" data-pane="audit">Аудит</div>
+    <div class="tab" data-pane="vulns">Уязвимости</div>
     <div class="tab" data-pane="grafana">Grafana</div>
     <div class="tab" data-pane="langfuse">Langfuse</div>
     <div class="tab" data-pane="admin">Админка</div>
@@ -286,6 +399,22 @@ _UI_HTML = """<!doctype html>
     </div>
     <div id="msgs" class="msgs"></div>
     <div id="out"></div>
+  </div>
+
+  <!-- ─── Pane: Каталог уязвимостей ───────────────────────────────────────── -->
+  <div class="pane" id="pane-vulns">
+    <div class="card">
+      <div class="label">Каталог уязвимостей (9 классов из ТЗ)</div>
+      <p style="color:var(--mut);font-size:13px;margin:6px 0 0">
+        Левая полоса карточки — уровень риска:
+        <span style="color:var(--ok)">зелёная INFO</span> ·
+        <span style="color:var(--warn)">оранжевая PII / средний</span> ·
+        <span style="color:var(--err)">красная CRITICAL / DESTRUCTIVE</span>.
+        Кнопка <b>«Прогнать через аудит»</b> отправит NL-вариант в наш пайплайн —
+        увидите, как Phase 1 правила и LLM-судья реагируют на этот класс.
+      </p>
+    </div>
+    <!-- VULN_CARDS -->
   </div>
 
   <!-- ─── Pane: Grafana iframe ────────────────────────────────────────────── -->
@@ -435,6 +564,16 @@ $$('.chip').forEach(c => {
 document.addEventListener('change', e => {
   if (e.target.classList && e.target.classList.contains('explain-tog')) {
     localStorage.setItem('explain', e.target.checked ? '1' : '');
+  }
+});
+
+// ── catalog «Прогнать через аудит» ──
+document.addEventListener('click', e => {
+  if (e.target.classList && e.target.classList.contains('vc-try')) {
+    const q = e.target.dataset.q;
+    document.querySelector(".tab[data-pane='audit']").click();
+    $('#task').value = q;
+    $('#go').click();
   }
 });
 
@@ -991,6 +1130,9 @@ async function runApprovedSQL() {
 </script>
 </body></html>
 """
+
+# подставляем сгенерированные карточки уязвимостей в шаблон
+_UI_HTML = _UI_HTML.replace("<!-- VULN_CARDS -->", _render_vuln_pane())
 
 
 @app.get("/", response_class=HTMLResponse)

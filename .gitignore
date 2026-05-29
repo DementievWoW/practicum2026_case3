@@ -44,3 +44,8 @@ Thumbs.db
 data/clarifications.jsonl
 data/feedback.jsonl
 data/events.csv
+
+
+# Внутренние доки (черновики/Q&A для команды — не пушим в общий репо)
+docs/customer_qa/
+docs/qa/
